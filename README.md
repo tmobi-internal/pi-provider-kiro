@@ -26,7 +26,7 @@ All models are free to use through Kiro.
 Install the provider:
 
 ```bash
-pi install pi-provider-kiro
+pi install npm:pi-provider-kiro
 ```
 
 Or install via npm directly:
