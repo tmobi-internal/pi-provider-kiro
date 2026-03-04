@@ -234,9 +234,11 @@ describe("Feature 3: OAuth — AWS Builder ID", () => {
         authMethod: "idc",
       });
 
-      const mockFetch = vi.fn()
+      const mockFetch = vi
+        .fn()
         .mockResolvedValueOnce({ ok: false, status: 401 }) // direct refresh fails
-        .mockResolvedValueOnce({                           // expired creds refresh succeeds
+        .mockResolvedValueOnce({
+          // expired creds refresh succeeds
           ok: true,
           json: () => Promise.resolve({ accessToken: "new_at", refreshToken: "new_rt", expiresIn: 3600 }),
         });
@@ -263,7 +265,8 @@ describe("Feature 3: OAuth — AWS Builder ID", () => {
         authMethod: "idc",
       });
 
-      const mockFetch = vi.fn()
+      const mockFetch = vi
+        .fn()
         .mockResolvedValueOnce({ ok: false, status: 401 }) // direct refresh fails
         .mockResolvedValueOnce({ ok: false, status: 401 }); // expired creds refresh also fails
       vi.stubGlobal("fetch", mockFetch);
