@@ -62,6 +62,20 @@ describe("Feature 6: History Management", () => {
       const r = sanitizeHistory(h);
       if (r.length > 0) expect(r[0].userInputMessage).toBeDefined();
     });
+
+    it("drops assistant messages with empty content and no tool uses (API error entries)", () => {
+      const errorEntry = { assistantResponseMessage: { content: "" } };
+      const h = [userEntry("hi"), errorEntry, userEntry("continue")];
+      const r = sanitizeHistory(h);
+      expect(r.find((e) => e.assistantResponseMessage?.content === "")).toBeUndefined();
+    });
+
+    it("drops assistant messages with undefined content and no tool uses", () => {
+      const errorEntry = { assistantResponseMessage: {} as any };
+      const h = [userEntry("hi"), errorEntry, userEntry("continue")];
+      const r = sanitizeHistory(h);
+      expect(r.find((e) => e.assistantResponseMessage && !e.assistantResponseMessage.toolUses && !e.assistantResponseMessage.content)).toBeUndefined();
+    });
   });
 
   describe("injectSyntheticToolCalls", () => {
