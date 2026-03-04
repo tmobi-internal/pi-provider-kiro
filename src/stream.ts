@@ -16,7 +16,7 @@ import type {
 import { calculateCost, createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 import { parseBracketToolCalls } from "./bracket-tool-parser.js";
 import { parseKiroEvents } from "./event-parser.js";
-import { addPlaceholderTools, HISTORY_LIMIT, truncateHistory } from "./history.js";
+import { addPlaceholderTools, historyByteBudget, HISTORY_LIMIT, truncateHistory } from "./history.js";
 import { getKiroCliCredentials } from "./kiro-cli.js";
 import { resolveKiroModel } from "./models.js";
 import { decideRetry, MAX_RETRY_DELAY, retryConfig } from "./retry.js";
@@ -35,6 +35,7 @@ import {
   type KiroUserInputMessage,
   normalizeMessages,
   sanitizeSurrogates,
+  SYSTEM_PROMPT_LIMIT,
   TOOL_RESULT_LIMIT,
   truncate,
 } from "./transform.js";
@@ -101,7 +102,7 @@ export function streamKiro(
       const endpoint = `https://q.${region}.amazonaws.com/generateAssistantResponse`;
       const kiroModelId = resolveKiroModel(model.id);
       const thinkingEnabled = !!options?.reasoning || model.reasoning;
-      let systemPrompt = context.systemPrompt ?? "";
+      let systemPrompt = (context.systemPrompt ?? "").slice(0, SYSTEM_PROMPT_LIMIT);
       if (thinkingEnabled) {
         const budget =
           options?.reasoning === "xhigh"
@@ -124,7 +125,7 @@ export function streamKiro(
           systemPrepended,
           currentMsgStartIdx,
         } = buildHistory(normalized, kiroModelId, effectiveSystemPrompt);
-        const history = truncateHistory(rawHistory, HISTORY_LIMIT);
+        const history = truncateHistory(rawHistory, historyByteBudget(model.contextWindow) || HISTORY_LIMIT);
         const toolResultLimit = TOOL_RESULT_LIMIT;
         const currentMessages = normalized.slice(currentMsgStartIdx);
         const firstMsg = currentMessages[0];

@@ -832,6 +832,27 @@ describe("Feature 9: Streaming Integration", () => {
   // No system prompt
   // =========================================================================
 
+  it("caps system prompt at 4096 characters", async () => {
+    const longPrompt = "x".repeat(8000);
+    const context: Context = {
+      systemPrompt: longPrompt,
+      messages: [{ role: "user", content: "Hi", timestamp: ts }],
+    };
+    const mockFetch = mockFetchOk('{"content":"ok"}{"contextUsagePercentage":2}');
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel({ reasoning: false }), context, { apiKey: "tok" });
+    await collect(stream);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    // System prompt is prepended to first user message content
+    const content = body.conversationState.currentMessage.userInputMessage.content;
+    expect(content).not.toContain("x".repeat(5000));
+    expect(content.length).toBeLessThan(longPrompt.length);
+
+    vi.unstubAllGlobals();
+  });
+
   it("works without system prompt", async () => {
     const context: Context = {
       messages: [{ role: "user", content: "Hi", timestamp: ts }],

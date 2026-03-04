@@ -4,6 +4,12 @@ import type { KiroHistoryEntry, KiroToolSpec } from "./transform.js";
 
 export const HISTORY_LIMIT = 850000;
 
+/** Derive a byte budget for history from the model's context window (in tokens).
+ *  Reserves ~70% of the window for history; ~4 bytes per token in JSON. */
+export function historyByteBudget(contextWindow: number): number {
+  return Math.floor(contextWindow * 0.7 * 4);
+}
+
 export function sanitizeHistory(history: KiroHistoryEntry[]): KiroHistoryEntry[] {
   const result: KiroHistoryEntry[] = [];
   for (let i = 0; i < history.length; i++) {

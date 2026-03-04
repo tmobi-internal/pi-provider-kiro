@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   addPlaceholderTools,
   extractToolNamesFromHistory,
+  historyByteBudget,
   HISTORY_LIMIT,
   injectSyntheticToolCalls,
   sanitizeHistory,
@@ -156,6 +157,18 @@ describe("Feature 6: History Management", () => {
     it("returns tools unchanged when history has no tool uses", () => {
       const tools = [toolSpec("bash")];
       expect(addPlaceholderTools(tools, [userEntry("hi")])).toEqual(tools);
+    });
+  });
+
+  describe("historyByteBudget", () => {
+    it("derives byte budget from context window (70% * 4 bytes/token)", () => {
+      expect(historyByteBudget(200000)).toBe(560000);
+      expect(historyByteBudget(128000)).toBe(358400);
+      expect(historyByteBudget(32000)).toBe(89600);
+    });
+
+    it("returns 0 for 0 context window", () => {
+      expect(historyByteBudget(0)).toBe(0);
     });
   });
 });
