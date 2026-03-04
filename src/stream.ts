@@ -361,9 +361,7 @@ export function streamKiro(
               usageEvent = event.data;
             } else if (event.type === "error") {
               // API sent an error mid-stream (throttling, internal error, etc.)
-              const errMsg = event.data.message
-                ? `${event.data.error}: ${event.data.message}`
-                : event.data.error;
+              const errMsg = event.data.message ? `${event.data.error}: ${event.data.message}` : event.data.error;
               streamError = errMsg;
               try {
                 reader.cancel();

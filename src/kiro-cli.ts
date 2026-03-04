@@ -142,9 +142,7 @@ export function saveKiroCliCredentials(creds: KiroCredentials): void {
       const escaped = JSON.stringify(tokenData).replace(/'/g, "''");
       const sql = `UPDATE auth_kv SET value = '${escaped}' WHERE key = '${key}';`;
       if (execKiroCliDb(dbPath, sql)) return;
-    } catch {
-      continue;
-    }
+    } catch {}
   }
 }
 
