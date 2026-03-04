@@ -17,6 +17,7 @@ import { calculateCost, createAssistantMessageEventStream } from "@mariozechner/
 import { parseBracketToolCalls } from "./bracket-tool-parser.js";
 import { parseKiroEvents } from "./event-parser.js";
 import { addPlaceholderTools, HISTORY_LIMIT, truncateHistory } from "./history.js";
+import { getKiroCliCredentials } from "./kiro-cli.js";
 import { resolveKiroModel } from "./models.js";
 import { decideRetry, retryConfig } from "./retry.js";
 import { ThinkingTagParser } from "./thinking-parser.js";
@@ -78,7 +79,7 @@ export function streamKiro(
       timestamp: Date.now(),
     };
     try {
-      const accessToken = options?.apiKey;
+      let accessToken = options?.apiKey;
       if (!accessToken) throw new Error("Kiro credentials not set. Run /login kiro or install kiro-cli.");
       const region = "us-east-1";
       const endpoint = `https://q.${region}.amazonaws.com/generateAssistantResponse`;
@@ -240,6 +241,12 @@ export function streamKiro(
           const decision = decideRetry(response.status, errText, retryCount, maxRetries);
           if (decision.shouldRetry) {
             retryCount++;
+            // On 403, try to get a fresh token before retrying — the current
+            // one may have been rotated by kiro-cli or another session.
+            if (response.status === 403) {
+              const freshCreds = getKiroCliCredentials();
+              if (freshCreds?.access) accessToken = freshCreds.access;
+            }
             if (decision.strategy === "reduce") {
               reductionFactor *= 0.7;
             } else if (decision.delayMs > 0) {
@@ -276,6 +283,7 @@ export function streamKiro(
         let gotFirstToken = false;
         let firstTokenTimedOut = false;
         let idleCancelled = false;
+        let streamError: string | null = null;
         const FIRST_TOKEN_SENTINEL = Symbol("firstTokenTimeout");
         while (true) {
           let readResult: ReadableStreamReadResult<Uint8Array>;
@@ -296,15 +304,18 @@ export function streamKiro(
             }
             readResult = result as ReadableStreamReadResult<Uint8Array>;
             gotFirstToken = true;
+            resetIdle(); // Start idle timer after first token received
           } else {
             readResult = await reader.read();
           }
           const { done, value } = readResult;
           if (done) break;
-          resetIdle();
           buffer += decoder.decode(value, { stream: true });
           const { events, remaining } = parseKiroEvents(buffer);
           buffer = remaining;
+          // Only reset idle timer when we get meaningful events, not on raw reads
+          // (the server may send keepalive data that doesn't contain content)
+          if (events.length > 0) resetIdle();
           for (const event of events) {
             if (event.type === "contextUsage") {
               const pct = event.data.contextUsagePercentage;
@@ -348,18 +359,29 @@ export function streamKiro(
               }
             } else if (event.type === "usage") {
               usageEvent = event.data;
+            } else if (event.type === "error") {
+              // API sent an error mid-stream (throttling, internal error, etc.)
+              const errMsg = event.data.message ? `${event.data.error}: ${event.data.message}` : event.data.error;
+              streamError = errMsg;
+              try {
+                reader.cancel();
+              } catch {}
+              break;
             }
             // followupPrompt events are intentionally ignored
           }
         }
         if (idleTimer) clearTimeout(idleTimer);
-        if (firstTokenTimedOut || idleCancelled) {
-          // Timed out waiting for tokens: retry with backoff (no size reduction)
+        if (firstTokenTimedOut || idleCancelled || streamError) {
+          // Timed out or received error mid-stream: retry with backoff
           if (retryCount < maxRetries) {
             retryCount++;
             const delayMs = 1000 * 2 ** (retryCount - 1);
             await new Promise((r) => setTimeout(r, delayMs));
             continue;
+          }
+          if (streamError) {
+            throw new Error(`Kiro API stream error after max retries: ${streamError}`);
           }
           throw new Error(`Kiro API error: ${firstTokenTimedOut ? "first token" : "idle"} timeout after max retries`);
         }
