@@ -137,35 +137,20 @@ describe("Feature 9: Streaming Integration", () => {
     vi.unstubAllGlobals();
   });
 
-  it("retries on 413 with reduced history", async () => {
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 413,
-        statusText: "Too Large",
-        text: () => Promise.resolve("CONTENT_LENGTH_EXCEEDS_THRESHOLD"),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        body: {
-          getReader: () => ({
-            read: vi
-              .fn()
-              .mockResolvedValueOnce({
-                done: false,
-                value: new TextEncoder().encode('{"content":"ok"}{"contextUsagePercentage":5}'),
-              })
-              .mockResolvedValueOnce({ done: true, value: undefined }),
-          }),
-        },
-      });
+  it("does not retry on 413 - propagates error immediately", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 413,
+      statusText: "Too Large",
+      text: () => Promise.resolve("CONTENT_LENGTH_EXCEEDS_THRESHOLD"),
+    });
     vi.stubGlobal("fetch", mockFetch);
 
     const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
     const events = await collect(stream);
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    expect(events.find((e) => e.type === "done")).toBeDefined();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const error = events.find((e) => e.type === "error");
+    expect(error).toBeDefined();
 
     vi.unstubAllGlobals();
   });
@@ -634,40 +619,25 @@ describe("Feature 9: Streaming Integration", () => {
     vi.unstubAllGlobals();
   });
 
-  it("retries on 400 with CONTENT_LENGTH_EXCEEDS_THRESHOLD", async () => {
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-        statusText: "Bad Request",
-        text: () => Promise.resolve("CONTENT_LENGTH_EXCEEDS_THRESHOLD"),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        body: {
-          getReader: () => ({
-            read: vi
-              .fn()
-              .mockResolvedValueOnce({
-                done: false,
-                value: new TextEncoder().encode('{"content":"ok"}{"contextUsagePercentage":5}'),
-              })
-              .mockResolvedValueOnce({ done: true, value: undefined }),
-          }),
-        },
-      });
+  it("does not retry on 400 with CONTENT_LENGTH_EXCEEDS_THRESHOLD", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      statusText: "Bad Request",
+      text: () => Promise.resolve("CONTENT_LENGTH_EXCEEDS_THRESHOLD"),
+    });
     vi.stubGlobal("fetch", mockFetch);
 
     const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
     const events = await collect(stream);
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    expect(events.find((e) => e.type === "done")).toBeDefined();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const error = events.find((e) => e.type === "error");
+    expect(error).toBeDefined();
 
     vi.unstubAllGlobals();
   });
 
-  it("gives up after max retries on repeated 413", async () => {
+  it("does not retry on repeated 413", async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 413,
@@ -679,8 +649,8 @@ describe("Feature 9: Streaming Integration", () => {
     const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
     const events = await collect(stream);
 
-    // 1 initial + 3 retries = 4 calls
-    expect(mockFetch).toHaveBeenCalledTimes(4);
+    // No retries — error propagated immediately
+    expect(mockFetch).toHaveBeenCalledTimes(1);
     const error = events.find((e) => e.type === "error");
     expect(error).toBeDefined();
     expect(error?.type === "error" && error.error.stopReason).toBe("error");
@@ -1106,6 +1076,35 @@ describe("Feature 9: Streaming Integration", () => {
 
     vi.unstubAllGlobals();
   }, 15000);
+
+  it("aborts promptly during retry backoff delay", async () => {
+    const ac = new AbortController();
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      statusText: "Too Many Requests",
+      text: () => Promise.resolve("Rate limited"),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok", signal: ac.signal });
+
+    // Abort after fetch returns but during the backoff delay
+    setTimeout(() => ac.abort(), 50);
+
+    const start = Date.now();
+    const events = await collect(stream);
+    const elapsed = Date.now() - start;
+
+    // Should abort quickly, not wait the full 1s+ backoff
+    expect(elapsed).toBeLessThan(500);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const error = events.find((e) => e.type === "error");
+    expect(error).toBeDefined();
+    expect(error?.type === "error" && error.error.stopReason).toBe("aborted");
+
+    vi.unstubAllGlobals();
+  });
 
   // =========================================================================
   // Content deduplication (Task 2.2)
