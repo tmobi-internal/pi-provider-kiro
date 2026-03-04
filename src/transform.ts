@@ -103,11 +103,10 @@ export function buildHistory(
   messages: Message[],
   modelId: string,
   systemPrompt?: string,
-  reductionFactor = 1.0,
 ): { history: KiroHistoryEntry[]; systemPrepended: boolean; currentMsgStartIdx: number } {
   const history: KiroHistoryEntry[] = [];
   let systemPrepended = false;
-  const toolResultLimit = Math.floor(TOOL_RESULT_LIMIT * reductionFactor);
+  const toolResultLimit = TOOL_RESULT_LIMIT;
 
   let currentMsgStartIdx = messages.length - 1;
   while (currentMsgStartIdx > 0 && messages[currentMsgStartIdx].role === "toolResult") currentMsgStartIdx--;
