@@ -10,7 +10,8 @@ export function sanitizeHistory(history: KiroHistoryEntry[]): KiroHistoryEntry[]
     const m = history[i];
     if (!m) continue;
     // Skip assistant messages with no content and no tool uses (e.g. from API errors)
-    if (m.assistantResponseMessage && !m.assistantResponseMessage.toolUses && !m.assistantResponseMessage.content) continue;
+    if (m.assistantResponseMessage && !m.assistantResponseMessage.toolUses && !m.assistantResponseMessage.content)
+      continue;
     if (m.assistantResponseMessage?.toolUses) {
       const next = history[i + 1];
       if (next?.userInputMessage?.userInputMessageContext?.toolResults) result.push(m);

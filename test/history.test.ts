@@ -74,7 +74,12 @@ describe("Feature 6: History Management", () => {
       const errorEntry = { assistantResponseMessage: {} as any };
       const h = [userEntry("hi"), errorEntry, userEntry("continue")];
       const r = sanitizeHistory(h);
-      expect(r.find((e) => e.assistantResponseMessage && !e.assistantResponseMessage.toolUses && !e.assistantResponseMessage.content)).toBeUndefined();
+      expect(
+        r.find(
+          (e) =>
+            e.assistantResponseMessage && !e.assistantResponseMessage.toolUses && !e.assistantResponseMessage.content,
+        ),
+      ).toBeUndefined();
     });
   });
 
