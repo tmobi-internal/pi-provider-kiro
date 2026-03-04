@@ -62,7 +62,33 @@ export function getKiroCliCredentials(): KiroCredentials | undefined {
   }
 }
 
-function tryKiroCliToken(dbPath: string, tokenKey: string, authMethod: KiroAuthMethod): KiroCredentials | undefined {
+/**
+ * Like getKiroCliCredentials but returns credentials even when the access token
+ * is expired, as long as a refresh token exists. Used to attempt a token refresh
+ * before falling back to the full device code login flow.
+ */
+export function getKiroCliCredentialsAllowExpired(): KiroCredentials | undefined {
+  const dbPath = getKiroCliDbPath();
+  if (!dbPath) return undefined;
+  try {
+    const idcCreds = tryKiroCliToken(dbPath, "kirocli:odic:token", "idc", true);
+    if (idcCreds) return idcCreds;
+
+    const desktopCreds = tryKiroCliToken(dbPath, "kirocli:social:token", "desktop", true);
+    if (desktopCreds) return desktopCreds;
+
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function tryKiroCliToken(
+  dbPath: string,
+  tokenKey: string,
+  authMethod: KiroAuthMethod,
+  allowExpired = false,
+): KiroCredentials | undefined {
   const tokenResult = queryKiroCliDb(dbPath, `SELECT value FROM auth_kv WHERE key = '${tokenKey}'`);
   if (!tokenResult) return undefined;
   const rows = JSON.parse(tokenResult) as Array<{ value: string }>;
@@ -71,7 +97,7 @@ function tryKiroCliToken(dbPath: string, tokenKey: string, authMethod: KiroAuthM
   if (!tokenData.access_token || !tokenData.refresh_token) return undefined;
   let expiresAt = Date.now() + 3600000;
   if (tokenData.expires_at) expiresAt = new Date(tokenData.expires_at).getTime();
-  if (Date.now() >= expiresAt - 2 * 60 * 1000) return undefined;
+  if (!allowExpired && Date.now() >= expiresAt - 2 * 60 * 1000) return undefined;
   const region = tokenData.region || "us-east-1";
 
   if (authMethod === "desktop") {
@@ -89,15 +115,17 @@ function tryKiroCliToken(dbPath: string, tokenKey: string, authMethod: KiroAuthM
   // IDC — need device registration credentials for refresh
   let clientId = "";
   let clientSecret = "";
+  // Match the device-registration key to the same prefix as the token key
+  const keyPrefix = tokenKey.split(":")[0]; // "kirocli" or "codewhisperer"
   const deviceResult = queryKiroCliDb(
     dbPath,
-    "SELECT value FROM auth_kv WHERE key LIKE '%device-registration%' LIMIT 1",
+    `SELECT value FROM auth_kv WHERE key = '${keyPrefix}:odic:device-registration'`,
   );
   if (deviceResult) {
     try {
       const d = JSON.parse(JSON.parse(deviceResult)[0]?.value);
-      clientId = d.clientId || "";
-      clientSecret = d.clientSecret || "";
+      clientId = d.client_id || d.clientId || "";
+      clientSecret = d.client_secret || d.clientSecret || "";
     } catch {}
   }
   return {
@@ -142,9 +170,7 @@ export function saveKiroCliCredentials(creds: KiroCredentials): void {
       const escaped = JSON.stringify(tokenData).replace(/'/g, "''");
       const sql = `UPDATE auth_kv SET value = '${escaped}' WHERE key = '${key}';`;
       if (execKiroCliDb(dbPath, sql)) return;
-    } catch {
-      continue;
-    }
+    } catch {}
   }
 }
 
