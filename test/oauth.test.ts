@@ -7,7 +7,6 @@ vi.mock("../src/kiro-cli.js", () => ({
   getKiroCliCredentials: vi.fn(() => undefined),
   getKiroCliCredentialsAllowExpired: vi.fn(() => undefined),
   saveKiroCliCredentials: vi.fn(),
-  refreshViaKiroCli: vi.fn(() => undefined),
 }));
 
 function makeCallbacks(overrides?: Partial<OAuthLoginCallbacks>): OAuthLoginCallbacks & {
@@ -223,46 +222,60 @@ describe("Feature 3: OAuth — AWS Builder ID", () => {
       vi.unstubAllGlobals();
     });
 
-    it("uses refreshViaKiroCli when DB tokens are expired", async () => {
-      const { refreshViaKiroCli } = await import("../src/kiro-cli.js");
-      const mockRefresh = vi.mocked(refreshViaKiroCli);
-      mockRefresh.mockReturnValueOnce({
+    it("uses expired kiro-cli creds as fallback when direct refresh fails", async () => {
+      const { getKiroCliCredentialsAllowExpired } = await import("../src/kiro-cli.js");
+      vi.mocked(getKiroCliCredentialsAllowExpired).mockReturnValueOnce({
         refresh: "cli_rt|cli_cid|cli_csec|idc",
         access: "cli_at",
-        expires: Date.now() + 3600000,
+        expires: Date.now() - 1000, // expired
         clientId: "cli_cid",
         clientSecret: "cli_csec",
         region: "us-east-1",
         authMethod: "idc",
       });
 
-      const callsBefore = mockRefresh.mock.calls.length;
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({ ok: false, status: 401 }) // direct refresh fails
+        .mockResolvedValueOnce({                           // expired creds refresh succeeds
+          ok: true,
+          json: () => Promise.resolve({ accessToken: "new_at", refreshToken: "new_rt", expiresIn: 3600 }),
+        });
+      vi.stubGlobal("fetch", mockFetch);
+
       const creds = await refreshKiroToken({
         refresh: "stale_rt|cid|csec|idc",
         access: "stale_at",
         expires: 0,
       });
-      expect(creds.access).toBe("cli_at");
-      expect(mockRefresh.mock.calls.length - callsBefore).toBe(1);
+      expect(creds.access).toBe("new_at");
+      vi.unstubAllGlobals();
     });
 
-    it("falls through to direct refresh when refreshViaKiroCli returns undefined", async () => {
-      const { refreshViaKiroCli } = await import("../src/kiro-cli.js");
-      vi.mocked(refreshViaKiroCli).mockReturnValueOnce(undefined);
-
-      const mockFetch = vi.fn().mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ accessToken: "direct_at", refreshToken: "direct_rt", expiresIn: 3600 }),
+    it("falls through to graceful degradation when expired creds refresh also fails", async () => {
+      const { getKiroCliCredentialsAllowExpired } = await import("../src/kiro-cli.js");
+      vi.mocked(getKiroCliCredentialsAllowExpired).mockReturnValueOnce({
+        refresh: "cli_rt|cli_cid|cli_csec|idc",
+        access: "cli_at",
+        expires: Date.now() - 1000,
+        clientId: "cli_cid",
+        clientSecret: "cli_csec",
+        region: "us-east-1",
+        authMethod: "idc",
       });
+
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({ ok: false, status: 401 }) // direct refresh fails
+        .mockResolvedValueOnce({ ok: false, status: 401 }); // expired creds refresh also fails
       vi.stubGlobal("fetch", mockFetch);
 
       const creds = await refreshKiroToken({
         refresh: "old_rt|cid|csec|idc",
         access: "old_at",
-        expires: 0,
+        expires: Date.now() - 60_000, // within 5-min buffer window
       });
-      expect(creds.access).toBe("direct_at");
-      expect(mockFetch).toHaveBeenCalledOnce();
+      // Falls through to Layer 5: returns credentials with buffer added
+      expect(creds.access).toBe("old_at");
+      expect(creds.expires).toBeGreaterThan(Date.now());
       vi.unstubAllGlobals();
     });
   });
