@@ -19,7 +19,7 @@ import { parseKiroEvents } from "./event-parser.js";
 import { addPlaceholderTools, HISTORY_LIMIT, truncateHistory } from "./history.js";
 import { getKiroCliCredentials } from "./kiro-cli.js";
 import { resolveKiroModel } from "./models.js";
-import { decideRetry, MAX_RETRY_DELAY, retryConfig } from "./retry.js";
+import { decideRetry, isTooBigError, MAX_RETRY_DELAY, retryConfig } from "./retry.js";
 import { ThinkingTagParser } from "./thinking-parser.js";
 import { countTokens } from "./tokenizer.js";
 import {
@@ -259,6 +259,10 @@ export function streamKiro(
               await abortableDelay(decision.delayMs, options?.signal);
             }
             continue;
+          }
+          // Format error so pi-ai's isContextOverflow() recognizes it
+          if (isTooBigError(response.status, errText)) {
+            throw new Error(`Kiro API error: context_length_exceeded (${response.status} ${errText})`);
           }
           throw new Error(`Kiro API error: ${response.status} ${response.statusText} ${errText}`);
         }

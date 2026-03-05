@@ -662,6 +662,91 @@ describe("Feature 9: Streaming Integration", () => {
   });
 
   // =========================================================================
+  // Overflow error message formatting (context_length_exceeded)
+  // =========================================================================
+
+  it("includes context_length_exceeded in error on 413", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 413,
+      statusText: "Too Large",
+      text: () => Promise.resolve("CONTENT_LENGTH_EXCEEDS_THRESHOLD"),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
+    const events = await collect(stream);
+
+    const error = events.find((e) => e.type === "error");
+    expect(error).toBeDefined();
+    expect(error?.type === "error" && error.error.errorMessage).toContain("context_length_exceeded");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("includes context_length_exceeded in error on 400 CONTENT_LENGTH_EXCEEDS_THRESHOLD", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      statusText: "Bad Request",
+      text: () => Promise.resolve("CONTENT_LENGTH_EXCEEDS_THRESHOLD"),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
+    const events = await collect(stream);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const error = events.find((e) => e.type === "error");
+    expect(error).toBeDefined();
+    expect(error?.type === "error" && error.error.errorMessage).toContain("context_length_exceeded");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("includes context_length_exceeded in error on 400 'Input is too long'", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      statusText: "Bad Request",
+      text: () => Promise.resolve("Input is too long."),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
+    const events = await collect(stream);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const error = events.find((e) => e.type === "error");
+    expect(error).toBeDefined();
+    expect(error?.type === "error" && error.error.errorMessage).toContain("context_length_exceeded");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("does NOT include context_length_exceeded for non-too-big errors", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      statusText: "Bad Request",
+      text: () => Promise.resolve("Invalid parameter: modelId"),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
+    const events = await collect(stream);
+
+    // 400 without retryable pattern → no retry, just 1 call
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const error = events.find((e) => e.type === "error");
+    expect(error).toBeDefined();
+    expect(error?.type === "error" && error.error.errorMessage).not.toContain("context_length_exceeded");
+    expect(error?.type === "error" && error.error.errorMessage).toContain("400");
+
+    vi.unstubAllGlobals();
+  });
+
+  // =========================================================================
   // No response body
   // =========================================================================
 

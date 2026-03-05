@@ -23,8 +23,13 @@ export function exponentialBackoff(attempt: number, baseMs: number, maxMs: numbe
 
 export const MAX_RETRY_DELAY = 10_000;
 
-const TOO_BIG_PATTERNS = ["CONTENT_LENGTH_EXCEEDS_THRESHOLD", "Input is too long", "Improperly formed"];
+export const TOO_BIG_PATTERNS = ["CONTENT_LENGTH_EXCEEDS_THRESHOLD", "Input is too long", "Improperly formed"];
 const NON_RETRYABLE_BODY_PATTERNS = ["MONTHLY_REQUEST_COUNT", "INSUFFICIENT_MODEL_CAPACITY"];
+
+/** Check whether an HTTP error represents a "request too large" condition. */
+export function isTooBigError(status: number, errorText: string): boolean {
+  return status === 413 || (status === 400 && TOO_BIG_PATTERNS.some((p) => errorText.includes(p)));
+}
 
 export function decideRetry(status: number, errorText: string, attempt: number, maxRetries: number): RetryDecision {
   if (attempt >= maxRetries) return { shouldRetry: false, delayMs: 0, strategy: "none" };
@@ -37,7 +42,7 @@ export function decideRetry(status: number, errorText: string, attempt: number, 
   // 413 or 400 with size-related error text → don't retry, propagate immediately.
   // The caller (pi-ai) is responsible for handling context overflow (e.g., compaction/trimming).
   // This matches kiro-cli behavior where the RTS model never retries ContextWindowOverflow.
-  if (status === 413 || (status === 400 && TOO_BIG_PATTERNS.some((p) => errorText.includes(p)))) {
+  if (isTooBigError(status, errorText)) {
     return { shouldRetry: false, delayMs: 0, strategy: "none" };
   }
 
