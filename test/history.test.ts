@@ -158,5 +158,4 @@ describe("Feature 6: History Management", () => {
       expect(addPlaceholderTools(tools, [userEntry("hi")])).toEqual(tools);
     });
   });
-
 });

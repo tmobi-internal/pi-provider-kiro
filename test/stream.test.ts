@@ -1157,10 +1157,10 @@ describe("Feature 9: Streaming Integration", () => {
 
     // tiktoken count should differ from chars/4 (which would be ~8)
     // "Hello there, this is a response." is 8 tokens with cl100k_base
-    expect(msg!.usage.output).toBeGreaterThan(0);
+    expect(msg?.usage.output).toBeGreaterThan(0);
     // The old method (chars/4) would give ceil(32/4) = 8
     // tiktoken gives an accurate count that won't be exactly chars/4 for most strings
-    expect(msg!.usage.totalTokens).toBe(msg!.usage.input + msg!.usage.output);
+    expect(msg?.usage.totalTokens).toBe(msg?.usage.input + msg?.usage.output);
 
     vi.unstubAllGlobals();
   });
@@ -1179,9 +1179,9 @@ describe("Feature 9: Streaming Integration", () => {
     const msg = done?.type === "done" ? done.message : undefined;
 
     // Usage event values should take precedence
-    expect(msg!.usage.input).toBe(500);
-    expect(msg!.usage.output).toBe(200);
-    expect(msg!.usage.totalTokens).toBe(700);
+    expect(msg?.usage.input).toBe(500);
+    expect(msg?.usage.output).toBe(200);
+    expect(msg?.usage.totalTokens).toBe(700);
 
     vi.unstubAllGlobals();
   });
@@ -1263,7 +1263,7 @@ describe("Feature 9: Streaming Integration", () => {
     // Should have extracted a tool call
     const toolCalls = msg?.content.filter((b) => b.type === "toolCall");
     expect(toolCalls).toHaveLength(1);
-    expect(toolCalls![0].type === "toolCall" && toolCalls![0].name).toBe("bash");
+    expect(toolCalls?.[0].type === "toolCall" && toolCalls?.[0].name).toBe("bash");
 
     // Text content should have bracket pattern stripped
     const textBlock = msg?.content.find((b) => b.type === "text");
@@ -1290,7 +1290,7 @@ describe("Feature 9: Streaming Integration", () => {
     // Only the native tool call should be present, not the bracket one
     const toolCalls = msg?.content.filter((b) => b.type === "toolCall");
     expect(toolCalls).toHaveLength(1);
-    expect(toolCalls![0].type === "toolCall" && toolCalls![0].name).toBe("bash");
+    expect(toolCalls?.[0].type === "toolCall" && toolCalls?.[0].name).toBe("bash");
 
     vi.unstubAllGlobals();
   });

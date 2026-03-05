@@ -240,10 +240,12 @@ export function streamKiro(
           signal: options?.signal,
         });
         if (!response.ok) {
-          const errText = await response.text().then(
-            (t) => t,
-            () => "",
-          );
+          let errText = "";
+          try {
+            errText = await response.text();
+          } catch {
+            errText = "";
+          }
           const decision = decideRetry(response.status, errText, retryCount, maxRetries);
           if (decision.shouldRetry) {
             retryCount++;
