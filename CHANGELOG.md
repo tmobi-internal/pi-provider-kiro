@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-05
+
+### Added
+
+- Cap system prompt at 4096 tokens before sending to Kiro API
+- Model-aware history byte budget derived from context window (70% × 4 bytes/token)
+- `MONTHLY_REQUEST_COUNT` and `INSUFFICIENT_MODEL_CAPACITY` as non-retryable error patterns (kiro-cli parity)
+- Abortable retry delays — abort signal cancels in-progress backoff waits
+- Expired kiro-cli credential fallback in OAuth refresh cascade
+
+### Changed
+
+- Lower max retry backoff from 30s to 10s
+- Increase idle timeout from 120s to 300s to match kiro-cli behavior
+- Read snake_case device registration credentials from kiro-cli
+
+### Fixed
+
+- Drop empty assistant messages from history sanitization
+- Handle error events mid-stream and reset idle timer on meaningful events
+- Refresh token from kiro-cli on 403 before retrying
+
 ## [0.2.2] - 2026-02-26
 
 ### Added
@@ -35,7 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: 17 models across 7 families, OAuth device code flow, kiro-cli SQLite credential fallback, streaming pipeline with thinking tag parser
 
-[Unreleased]: https://github.com/mikeyobrien/pi-provider-kiro/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/mikeyobrien/pi-provider-kiro/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/mikeyobrien/pi-provider-kiro/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/mikeyobrien/pi-provider-kiro/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/mikeyobrien/pi-provider-kiro/compare/v0.1.1...v0.2.1
 [0.1.1]: https://github.com/mikeyobrien/pi-provider-kiro/releases/tag/v0.1.1
