@@ -1,7 +1,10 @@
 // ABOUTME: Retry decision logic and exponential backoff for Kiro API requests.
 // ABOUTME: Centralizes retry strategy selection based on HTTP status codes.
 
-export const FIRST_TOKEN_TIMEOUT = 15_000;
+// kiro-cli uses 5-minute read/operation timeouts (DEFAULT_TIMEOUT_DURATION)
+// and 5-minute stalled stream grace period. 90s matches the TUI's
+// INITIAL_RESPONSE_TIMEOUT_MS for the first event from the backend.
+export const FIRST_TOKEN_TIMEOUT = 90_000;
 
 // Mutable config for values that tests need to override
 export const retryConfig = {

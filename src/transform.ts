@@ -45,7 +45,6 @@ export interface KiroHistoryEntry {
 }
 
 export const TOOL_RESULT_LIMIT = 250000;
-export const SYSTEM_PROMPT_LIMIT = 4096;
 
 export function sanitizeSurrogates(text: string): string {
   return text.replace(/[\uD800-\uDFFF]/g, "\uFFFD");
