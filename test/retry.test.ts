@@ -2,7 +2,14 @@
 // ABOUTME: Covers all status codes, attempt boundaries, and delay calculations.
 
 import { describe, expect, it } from "vitest";
-import { decideRetry, exponentialBackoff, FIRST_TOKEN_TIMEOUT, MAX_RETRY_DELAY, retryConfig } from "../src/retry.js";
+import {
+  decideRetry,
+  exponentialBackoff,
+  FIRST_TOKEN_TIMEOUT,
+  isTooBigError,
+  MAX_RETRY_DELAY,
+  retryConfig,
+} from "../src/retry.js";
 
 describe("exponentialBackoff", () => {
   it("returns baseMs for attempt 0", () => {
@@ -168,6 +175,35 @@ describe("decideRetry", () => {
 describe("MAX_RETRY_DELAY", () => {
   it("is exported as 10000ms", () => {
     expect(MAX_RETRY_DELAY).toBe(10000);
+  });
+});
+
+describe("isTooBigError", () => {
+  it("returns true for 413 regardless of error text", () => {
+    expect(isTooBigError(413, "")).toBe(true);
+    expect(isTooBigError(413, "anything")).toBe(true);
+  });
+
+  it("returns true for 400 with CONTENT_LENGTH_EXCEEDS_THRESHOLD", () => {
+    expect(isTooBigError(400, "CONTENT_LENGTH_EXCEEDS_THRESHOLD")).toBe(true);
+  });
+
+  it("returns true for 400 with 'Input is too long'", () => {
+    expect(isTooBigError(400, "Input is too long.")).toBe(true);
+    expect(isTooBigError(400, "Input is too long for model")).toBe(true);
+  });
+
+  it("returns true for 400 with 'Improperly formed'", () => {
+    expect(isTooBigError(400, "Improperly formed request")).toBe(true);
+  });
+
+  it("returns false for 400 without matching pattern", () => {
+    expect(isTooBigError(400, "Invalid parameter: modelId")).toBe(false);
+  });
+
+  it("returns false for non-413/400 status codes", () => {
+    expect(isTooBigError(429, "CONTENT_LENGTH_EXCEEDS_THRESHOLD")).toBe(false);
+    expect(isTooBigError(500, "Input is too long")).toBe(false);
   });
 });
 
