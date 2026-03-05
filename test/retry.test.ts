@@ -172,8 +172,8 @@ describe("MAX_RETRY_DELAY", () => {
 });
 
 describe("FIRST_TOKEN_TIMEOUT", () => {
-  it("is exported as 15000ms", () => {
-    expect(FIRST_TOKEN_TIMEOUT).toBe(15000);
+  it("is exported as 90000ms", () => {
+    expect(FIRST_TOKEN_TIMEOUT).toBe(90000);
   });
 
   it("retryConfig.firstTokenTimeoutMs defaults to FIRST_TOKEN_TIMEOUT", () => {
