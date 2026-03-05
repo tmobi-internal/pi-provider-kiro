@@ -18,29 +18,39 @@ export function exponentialBackoff(attempt: number, baseMs: number, maxMs: numbe
   return Math.min(baseMs * 2 ** attempt, maxMs);
 }
 
+export const MAX_RETRY_DELAY = 10_000;
+
 const TOO_BIG_PATTERNS = ["CONTENT_LENGTH_EXCEEDS_THRESHOLD", "Input is too long", "Improperly formed"];
+const NON_RETRYABLE_BODY_PATTERNS = ["MONTHLY_REQUEST_COUNT", "INSUFFICIENT_MODEL_CAPACITY"];
 
 export function decideRetry(status: number, errorText: string, attempt: number, maxRetries: number): RetryDecision {
   if (attempt >= maxRetries) return { shouldRetry: false, delayMs: 0, strategy: "none" };
 
-  // 413 or 400 with size-related error text → reduce request size
+  // Body-level non-retryable markers (any status) — matches kiro-cli retry classifier
+  if (NON_RETRYABLE_BODY_PATTERNS.some((p) => errorText.includes(p))) {
+    return { shouldRetry: false, delayMs: 0, strategy: "none" };
+  }
+
+  // 413 or 400 with size-related error text → don't retry, propagate immediately.
+  // The caller (pi-ai) is responsible for handling context overflow (e.g., compaction/trimming).
+  // This matches kiro-cli behavior where the RTS model never retries ContextWindowOverflow.
   if (status === 413 || (status === 400 && TOO_BIG_PATTERNS.some((p) => errorText.includes(p)))) {
-    return { shouldRetry: true, delayMs: 0, strategy: "reduce" };
+    return { shouldRetry: false, delayMs: 0, strategy: "none" };
   }
 
   // 429 rate limited → backoff with 1s base
   if (status === 429) {
-    return { shouldRetry: true, delayMs: exponentialBackoff(attempt, 1000, 30000), strategy: "backoff" };
+    return { shouldRetry: true, delayMs: exponentialBackoff(attempt, 1000, MAX_RETRY_DELAY), strategy: "backoff" };
   }
 
   // 5xx server errors → backoff with 1s base
   if (status >= 500 && status < 600) {
-    return { shouldRetry: true, delayMs: exponentialBackoff(attempt, 1000, 30000), strategy: "backoff" };
+    return { shouldRetry: true, delayMs: exponentialBackoff(attempt, 1000, MAX_RETRY_DELAY), strategy: "backoff" };
   }
 
   // 403 transient auth race → shorter backoff with 500ms base
   if (status === 403) {
-    return { shouldRetry: true, delayMs: exponentialBackoff(attempt, 500, 30000), strategy: "backoff" };
+    return { shouldRetry: true, delayMs: exponentialBackoff(attempt, 500, MAX_RETRY_DELAY), strategy: "backoff" };
   }
 
   return { shouldRetry: false, delayMs: 0, strategy: "none" };

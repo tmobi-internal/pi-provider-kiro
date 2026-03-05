@@ -16,10 +16,10 @@ import type {
 import { calculateCost, createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 import { parseBracketToolCalls } from "./bracket-tool-parser.js";
 import { parseKiroEvents } from "./event-parser.js";
-import { addPlaceholderTools, HISTORY_LIMIT, truncateHistory } from "./history.js";
+import { addPlaceholderTools, HISTORY_LIMIT, historyByteBudget, truncateHistory } from "./history.js";
 import { getKiroCliCredentials } from "./kiro-cli.js";
 import { resolveKiroModel } from "./models.js";
-import { decideRetry, retryConfig } from "./retry.js";
+import { decideRetry, MAX_RETRY_DELAY, retryConfig } from "./retry.js";
 import { ThinkingTagParser } from "./thinking-parser.js";
 import { countTokens } from "./tokenizer.js";
 import {
@@ -34,11 +34,28 @@ import {
   type KiroToolSpec,
   type KiroUserInputMessage,
   normalizeMessages,
+  SYSTEM_PROMPT_LIMIT,
   sanitizeSurrogates,
   TOOL_RESULT_LIMIT,
   truncate,
 } from "./transform.js";
 import { TRUNCATION_NOTICE, wasPreviousResponseTruncated } from "./truncation.js";
+
+/** Delay that rejects early if the abort signal fires. */
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      },
+      { once: true },
+    );
+  });
+}
 
 interface KiroRequest {
   conversationState: {
@@ -85,7 +102,7 @@ export function streamKiro(
       const endpoint = `https://q.${region}.amazonaws.com/generateAssistantResponse`;
       const kiroModelId = resolveKiroModel(model.id);
       const thinkingEnabled = !!options?.reasoning || model.reasoning;
-      let systemPrompt = context.systemPrompt ?? "";
+      let systemPrompt = (context.systemPrompt ?? "").slice(0, SYSTEM_PROMPT_LIMIT);
       if (thinkingEnabled) {
         const budget =
           options?.reasoning === "xhigh"
@@ -99,24 +116,17 @@ export function streamKiro(
       }
       let retryCount = 0;
       const maxRetries = 3;
-      let reductionFactor = 1.0;
       while (retryCount <= maxRetries) {
-        let effectiveSystemPrompt = systemPrompt;
-        if (reductionFactor < 1.0) {
-          // Truncate system prompt on retry to reduce request size
-          const maxSystemLength = Math.floor(5000 * reductionFactor);
-          if (effectiveSystemPrompt.length > maxSystemLength) {
-            effectiveSystemPrompt = `${effectiveSystemPrompt.substring(0, maxSystemLength)}\n[System prompt truncated due to length]`;
-          }
-        }
+        if (options?.signal?.aborted) throw options.signal.reason;
+        const effectiveSystemPrompt = systemPrompt;
         const normalized = normalizeMessages(context.messages);
         const {
           history: rawHistory,
           systemPrepended,
           currentMsgStartIdx,
-        } = buildHistory(normalized, kiroModelId, effectiveSystemPrompt, reductionFactor);
-        const history = truncateHistory(rawHistory, Math.floor(HISTORY_LIMIT * reductionFactor));
-        const toolResultLimit = Math.floor(TOOL_RESULT_LIMIT * reductionFactor);
+        } = buildHistory(normalized, kiroModelId, effectiveSystemPrompt);
+        const history = truncateHistory(rawHistory, historyByteBudget(model.contextWindow) || HISTORY_LIMIT);
+        const toolResultLimit = TOOL_RESULT_LIMIT;
         const currentMessages = normalized.slice(currentMsgStartIdx);
         const firstMsg = currentMessages[0];
         let currentContent = "";
@@ -187,11 +197,6 @@ export function streamKiro(
           if (context.tools?.length) {
             let kt = convertToolsToKiro(context.tools);
             if (history.length > 0) kt = addPlaceholderTools(kt, history);
-            // Limit tools on retry to reduce request size
-            if (reductionFactor < 1.0) {
-              const maxTools = Math.max(3, Math.floor(kt.length * reductionFactor));
-              kt = kt.slice(0, maxTools);
-            }
             uimc.tools = kt;
           }
         }
@@ -237,7 +242,10 @@ export function streamKiro(
           signal: options?.signal,
         });
         if (!response.ok) {
-          const errText = await response.text().catch(() => "");
+          const errText = await response.text().then(
+            (t) => t,
+            () => "",
+          );
           const decision = decideRetry(response.status, errText, retryCount, maxRetries);
           if (decision.shouldRetry) {
             retryCount++;
@@ -247,10 +255,8 @@ export function streamKiro(
               const freshCreds = getKiroCliCredentials();
               if (freshCreds?.access) accessToken = freshCreds.access;
             }
-            if (decision.strategy === "reduce") {
-              reductionFactor *= 0.7;
-            } else if (decision.delayMs > 0) {
-              await new Promise((r) => setTimeout(r, decision.delayMs));
+            if (decision.delayMs > 0) {
+              await abortableDelay(decision.delayMs, options?.signal);
             }
             continue;
           }
@@ -269,7 +275,7 @@ export function streamKiro(
         let textBlockIndex: number | null = null;
         const toolCalls: KiroToolCallState[] = [];
         let currentToolCall: KiroToolCallState | null = null;
-        const IDLE_TIMEOUT = 120_000;
+        const IDLE_TIMEOUT = 300_000;
         let idleTimer: ReturnType<typeof setTimeout> | null = null;
         const resetIdle = () => {
           if (idleTimer) clearTimeout(idleTimer);
@@ -376,8 +382,8 @@ export function streamKiro(
           // Timed out or received error mid-stream: retry with backoff
           if (retryCount < maxRetries) {
             retryCount++;
-            const delayMs = 1000 * 2 ** (retryCount - 1);
-            await new Promise((r) => setTimeout(r, delayMs));
+            const delayMs = Math.min(1000 * 2 ** (retryCount - 1), MAX_RETRY_DELAY);
+            await abortableDelay(delayMs, options?.signal);
             continue;
           }
           if (streamError) {

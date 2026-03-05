@@ -43,7 +43,7 @@ Kiro requires strict alternating `userInputMessage` / `assistantResponseMessage`
 Raw bytes → `parseKiroEvents()` → typed `KiroStreamEvent` → `ThinkingTagParser` (if reasoning) → pi `AssistantMessageEventStream` events.
 
 ### Retry with Reduction
-On 413/too-large: up to 3 retries, each multiplying `reductionFactor` by 0.7. Affects history limit, system prompt length, tool result size, and tool count.
+On 413/too-large: error propagated immediately to the caller (no retry). The caller is responsible for handling context overflow (e.g., compaction or history trimming), matching kiro-cli behavior.
 
 ### Credential Cascade
 1. kiro-cli SQLite DB — tries IDC token first, then desktop/social token

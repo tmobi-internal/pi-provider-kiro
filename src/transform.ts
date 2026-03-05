@@ -45,6 +45,7 @@ export interface KiroHistoryEntry {
 }
 
 export const TOOL_RESULT_LIMIT = 250000;
+export const SYSTEM_PROMPT_LIMIT = 4096;
 
 export function sanitizeSurrogates(text: string): string {
   return text.replace(/[\uD800-\uDFFF]/g, "\uFFFD");
@@ -103,11 +104,10 @@ export function buildHistory(
   messages: Message[],
   modelId: string,
   systemPrompt?: string,
-  reductionFactor = 1.0,
 ): { history: KiroHistoryEntry[]; systemPrepended: boolean; currentMsgStartIdx: number } {
   const history: KiroHistoryEntry[] = [];
   let systemPrepended = false;
-  const toolResultLimit = Math.floor(TOOL_RESULT_LIMIT * reductionFactor);
+  const toolResultLimit = TOOL_RESULT_LIMIT;
 
   let currentMsgStartIdx = messages.length - 1;
   while (currentMsgStartIdx > 0 && messages[currentMsgStartIdx].role === "toolResult") currentMsgStartIdx--;

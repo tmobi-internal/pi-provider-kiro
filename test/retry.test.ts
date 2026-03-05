@@ -2,7 +2,7 @@
 // ABOUTME: Covers all status codes, attempt boundaries, and delay calculations.
 
 import { describe, expect, it } from "vitest";
-import { decideRetry, exponentialBackoff, FIRST_TOKEN_TIMEOUT, retryConfig } from "../src/retry.js";
+import { decideRetry, exponentialBackoff, FIRST_TOKEN_TIMEOUT, MAX_RETRY_DELAY, retryConfig } from "../src/retry.js";
 
 describe("exponentialBackoff", () => {
   it("returns baseMs for attempt 0", () => {
@@ -29,43 +29,51 @@ describe("decideRetry", () => {
   const maxRetries = 3;
 
   describe("413 - Payload Too Large", () => {
-    it("returns reduce strategy with 0ms delay", () => {
+    it("does not retry - propagates immediately for caller to handle", () => {
       const result = decideRetry(413, "too big", 0, maxRetries);
-      expect(result.shouldRetry).toBe(true);
-      expect(result.strategy).toBe("reduce");
-      expect(result.delayMs).toBe(0);
-    });
-
-    it("does not retry when attempt >= maxRetries", () => {
-      const result = decideRetry(413, "too big", 3, maxRetries);
       expect(result.shouldRetry).toBe(false);
       expect(result.strategy).toBe("none");
     });
   });
 
   describe("400 - too big variants", () => {
-    it("reduces on CONTENT_LENGTH_EXCEEDS_THRESHOLD", () => {
+    it("does not retry on CONTENT_LENGTH_EXCEEDS_THRESHOLD", () => {
       const result = decideRetry(400, "CONTENT_LENGTH_EXCEEDS_THRESHOLD", 0, maxRetries);
-      expect(result.shouldRetry).toBe(true);
-      expect(result.strategy).toBe("reduce");
+      expect(result.shouldRetry).toBe(false);
     });
 
-    it("reduces on Input is too long", () => {
+    it("does not retry on Input is too long", () => {
       const result = decideRetry(400, "Input is too long for model", 0, maxRetries);
-      expect(result.shouldRetry).toBe(true);
-      expect(result.strategy).toBe("reduce");
+      expect(result.shouldRetry).toBe(false);
     });
 
-    it("reduces on Improperly formed", () => {
+    it("does not retry on Improperly formed", () => {
       const result = decideRetry(400, "Improperly formed request", 0, maxRetries);
-      expect(result.shouldRetry).toBe(true);
-      expect(result.strategy).toBe("reduce");
+      expect(result.shouldRetry).toBe(false);
     });
 
     it("does not retry on 400 without retryable message", () => {
       const result = decideRetry(400, "Invalid parameter: modelId", 0, maxRetries);
       expect(result.shouldRetry).toBe(false);
       expect(result.strategy).toBe("none");
+    });
+  });
+
+  describe("non-retryable body patterns (kiro-cli parity)", () => {
+    it("does not retry on MONTHLY_REQUEST_COUNT regardless of status", () => {
+      for (const status of [400, 429, 500]) {
+        const result = decideRetry(status, "MONTHLY_REQUEST_COUNT exceeded", 0, maxRetries);
+        expect(result.shouldRetry).toBe(false);
+        expect(result.strategy).toBe("none");
+      }
+    });
+
+    it("does not retry on INSUFFICIENT_MODEL_CAPACITY regardless of status", () => {
+      for (const status of [400, 500, 503]) {
+        const result = decideRetry(status, "INSUFFICIENT_MODEL_CAPACITY", 0, maxRetries);
+        expect(result.shouldRetry).toBe(false);
+        expect(result.strategy).toBe("none");
+      }
     });
   });
 
@@ -110,9 +118,10 @@ describe("decideRetry", () => {
       expect(result.delayMs).toBe(2000);
     });
 
-    it("caps backoff delay at 30s", () => {
+    it("caps backoff delay at MAX_RETRY_DELAY (10s)", () => {
       const result = decideRetry(500, "", 10, 20);
-      expect(result.delayMs).toBeLessThanOrEqual(30000);
+      expect(result.delayMs).toBeLessThanOrEqual(MAX_RETRY_DELAY);
+      expect(result.delayMs).toBe(MAX_RETRY_DELAY);
     });
   });
 
@@ -153,6 +162,12 @@ describe("decideRetry", () => {
       const result = decideRetry(422, "Unprocessable Entity", 0, maxRetries);
       expect(result.shouldRetry).toBe(false);
     });
+  });
+});
+
+describe("MAX_RETRY_DELAY", () => {
+  it("is exported as 10000ms", () => {
+    expect(MAX_RETRY_DELAY).toBe(10000);
   });
 });
 

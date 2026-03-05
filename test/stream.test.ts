@@ -3,7 +3,9 @@ import type {
   AssistantMessage,
   AssistantMessageEvent,
   Context,
+  ImageContent,
   Model,
+  TextContent,
   ToolResultMessage,
 } from "@mariozechner/pi-ai";
 import { describe, expect, it, vi } from "vitest";
@@ -137,35 +139,20 @@ describe("Feature 9: Streaming Integration", () => {
     vi.unstubAllGlobals();
   });
 
-  it("retries on 413 with reduced history", async () => {
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 413,
-        statusText: "Too Large",
-        text: () => Promise.resolve("CONTENT_LENGTH_EXCEEDS_THRESHOLD"),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        body: {
-          getReader: () => ({
-            read: vi
-              .fn()
-              .mockResolvedValueOnce({
-                done: false,
-                value: new TextEncoder().encode('{"content":"ok"}{"contextUsagePercentage":5}'),
-              })
-              .mockResolvedValueOnce({ done: true, value: undefined }),
-          }),
-        },
-      });
+  it("does not retry on 413 - propagates error immediately", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 413,
+      statusText: "Too Large",
+      text: () => Promise.resolve("CONTENT_LENGTH_EXCEEDS_THRESHOLD"),
+    });
     vi.stubGlobal("fetch", mockFetch);
 
     const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
     const events = await collect(stream);
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    expect(events.find((e) => e.type === "done")).toBeDefined();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const error = events.find((e) => e.type === "error");
+    expect(error).toBeDefined();
 
     vi.unstubAllGlobals();
   });
@@ -273,7 +260,7 @@ describe("Feature 9: Streaming Integration", () => {
     const tcEnd = events.find((e) => e.type === "toolcall_end");
     expect(tcEnd?.type === "toolcall_end" && tcEnd.toolCall.name).toBe("bash");
     expect(tcEnd?.type === "toolcall_end" && tcEnd.toolCall.id).toBe("tc1");
-    expect(tcEnd?.type === "toolcall_end" && (tcEnd.toolCall.arguments as any).cmd).toBe("ls");
+    expect(tcEnd?.type === "toolcall_end" && (tcEnd.toolCall.arguments as Record<string, unknown>).cmd).toBe("ls");
 
     const done = events.find((e) => e.type === "done");
     expect(done?.type === "done" && done.reason).toBe("toolUse");
@@ -321,9 +308,10 @@ describe("Feature 9: Streaming Integration", () => {
     const msg = done?.type === "done" ? done.message : undefined;
 
     expect(msg).toBeDefined();
-    expect(msg!.usage.input).toBeGreaterThan(0);
-    expect(msg!.usage.output).toBeGreaterThan(0);
-    expect(msg!.usage.totalTokens).toBe(msg!.usage.input + msg!.usage.output);
+    if (!msg) throw new Error("msg undefined");
+    expect(msg.usage.input).toBeGreaterThan(0);
+    expect(msg.usage.output).toBeGreaterThan(0);
+    expect(msg.usage.totalTokens).toBe(msg.usage.input + msg.usage.output);
 
     vi.unstubAllGlobals();
   });
@@ -448,7 +436,7 @@ describe("Feature 9: Streaming Integration", () => {
   it("handles empty content array user message", async () => {
     const context: Context = {
       systemPrompt: "You are helpful",
-      messages: [{ role: "user", content: [] as any, timestamp: ts }],
+      messages: [{ role: "user" as const, content: [] as (TextContent | ImageContent)[], timestamp: ts }],
     };
     const mockFetch = mockFetchOk('{"content":"Hi"}{"contextUsagePercentage":2}');
     vi.stubGlobal("fetch", mockFetch);
@@ -634,40 +622,25 @@ describe("Feature 9: Streaming Integration", () => {
     vi.unstubAllGlobals();
   });
 
-  it("retries on 400 with CONTENT_LENGTH_EXCEEDS_THRESHOLD", async () => {
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-        statusText: "Bad Request",
-        text: () => Promise.resolve("CONTENT_LENGTH_EXCEEDS_THRESHOLD"),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        body: {
-          getReader: () => ({
-            read: vi
-              .fn()
-              .mockResolvedValueOnce({
-                done: false,
-                value: new TextEncoder().encode('{"content":"ok"}{"contextUsagePercentage":5}'),
-              })
-              .mockResolvedValueOnce({ done: true, value: undefined }),
-          }),
-        },
-      });
+  it("does not retry on 400 with CONTENT_LENGTH_EXCEEDS_THRESHOLD", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      statusText: "Bad Request",
+      text: () => Promise.resolve("CONTENT_LENGTH_EXCEEDS_THRESHOLD"),
+    });
     vi.stubGlobal("fetch", mockFetch);
 
     const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
     const events = await collect(stream);
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    expect(events.find((e) => e.type === "done")).toBeDefined();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const error = events.find((e) => e.type === "error");
+    expect(error).toBeDefined();
 
     vi.unstubAllGlobals();
   });
 
-  it("gives up after max retries on repeated 413", async () => {
+  it("does not retry on repeated 413", async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 413,
@@ -679,8 +652,8 @@ describe("Feature 9: Streaming Integration", () => {
     const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
     const events = await collect(stream);
 
-    // 1 initial + 3 retries = 4 calls
-    expect(mockFetch).toHaveBeenCalledTimes(4);
+    // No retries — error propagated immediately
+    expect(mockFetch).toHaveBeenCalledTimes(1);
     const error = events.find((e) => e.type === "error");
     expect(error).toBeDefined();
     expect(error?.type === "error" && error.error.stopReason).toBe("error");
@@ -752,7 +725,7 @@ describe("Feature 9: Streaming Integration", () => {
     expect(tcEnd).toBeDefined();
     expect(tcEnd?.type === "toolcall_end" && tcEnd.toolCall.name).toBe("write");
     expect(tcEnd?.type === "toolcall_end" && tcEnd.toolCall.id).toBe("tc1");
-    expect(tcEnd?.type === "toolcall_end" && (tcEnd.toolCall.arguments as any).path).toBe("f.txt");
+    expect(tcEnd?.type === "toolcall_end" && (tcEnd.toolCall.arguments as Record<string, unknown>).path).toBe("f.txt");
 
     const done = events.find((e) => e.type === "done");
     expect(done?.type === "done" && done.reason).toBe("toolUse");
@@ -779,7 +752,9 @@ describe("Feature 9: Streaming Integration", () => {
     const tcEnd = events.find((e) => e.type === "toolcall_end");
     expect(tcEnd).toBeDefined();
     expect(tcEnd?.type === "toolcall_end" && tcEnd.toolCall.name).toBe("write");
-    expect(tcEnd?.type === "toolcall_end" && (tcEnd.toolCall.arguments as any).path).toBe("hello.txt");
+    expect(tcEnd?.type === "toolcall_end" && (tcEnd.toolCall.arguments as Record<string, unknown>).path).toBe(
+      "hello.txt",
+    );
 
     vi.unstubAllGlobals();
   });
@@ -805,8 +780,12 @@ describe("Feature 9: Streaming Integration", () => {
     const tcEnd = events.find((e) => e.type === "toolcall_end");
     expect(tcEnd).toBeDefined();
     expect(tcEnd?.type === "toolcall_end" && tcEnd.toolCall.name).toBe("write");
-    expect(tcEnd?.type === "toolcall_end" && (tcEnd.toolCall.arguments as any).path).toBe("file.md");
-    expect(tcEnd?.type === "toolcall_end" && (tcEnd.toolCall.arguments as any).content).toBe("hello");
+    expect(tcEnd?.type === "toolcall_end" && (tcEnd.toolCall.arguments as Record<string, unknown>).path).toBe(
+      "file.md",
+    );
+    expect(tcEnd?.type === "toolcall_end" && (tcEnd.toolCall.arguments as Record<string, unknown>).content).toBe(
+      "hello",
+    );
 
     vi.unstubAllGlobals();
   });
@@ -861,6 +840,27 @@ describe("Feature 9: Streaming Integration", () => {
   // =========================================================================
   // No system prompt
   // =========================================================================
+
+  it("caps system prompt at 4096 characters", async () => {
+    const longPrompt = "x".repeat(8000);
+    const context: Context = {
+      systemPrompt: longPrompt,
+      messages: [{ role: "user", content: "Hi", timestamp: ts }],
+    };
+    const mockFetch = mockFetchOk('{"content":"ok"}{"contextUsagePercentage":2}');
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel({ reasoning: false }), context, { apiKey: "tok" });
+    await collect(stream);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    // System prompt is prepended to first user message content
+    const content = body.conversationState.currentMessage.userInputMessage.content;
+    expect(content).not.toContain("x".repeat(5000));
+    expect(content.length).toBeLessThan(longPrompt.length);
+
+    vi.unstubAllGlobals();
+  });
 
   it("works without system prompt", async () => {
     const context: Context = {
@@ -1106,6 +1106,35 @@ describe("Feature 9: Streaming Integration", () => {
 
     vi.unstubAllGlobals();
   }, 15000);
+
+  it("aborts promptly during retry backoff delay", async () => {
+    const ac = new AbortController();
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      statusText: "Too Many Requests",
+      text: () => Promise.resolve("Rate limited"),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok", signal: ac.signal });
+
+    // Abort after fetch returns but during the backoff delay
+    setTimeout(() => ac.abort(), 50);
+
+    const start = Date.now();
+    const events = await collect(stream);
+    const elapsed = Date.now() - start;
+
+    // Should abort quickly, not wait the full 1s+ backoff
+    expect(elapsed).toBeLessThan(500);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const error = events.find((e) => e.type === "error");
+    expect(error).toBeDefined();
+    expect(error?.type === "error" && error.error.stopReason).toBe("aborted");
+
+    vi.unstubAllGlobals();
+  });
 
   // =========================================================================
   // Content deduplication (Task 2.2)
