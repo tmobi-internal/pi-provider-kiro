@@ -423,6 +423,7 @@ export function streamKiro(
             content: (output.content[textBlockIndex] as TextContent).text,
             partial: output,
           });
+        let emittedToolCalls = 0;
         for (const tc of toolCalls) {
           if (!tc.input.trim()) {
             console.warn(
@@ -445,6 +446,7 @@ export function streamKiro(
           stream.push({ type: "toolcall_start", contentIndex: idx, partial: output });
           stream.push({ type: "toolcall_delta", contentIndex: idx, delta: tc.input, partial: output });
           stream.push({ type: "toolcall_end", contentIndex: idx, toolCall, partial: output });
+          emittedToolCalls++;
         }
         // Prefer usage event values when available, fall back to tiktoken
         if (usageEvent) {
@@ -460,10 +462,40 @@ export function streamKiro(
           // Model might not have cost info, use zeros
           output.usage.cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
         }
-        if (!receivedContextUsage && toolCalls.length === 0) {
+        // Detect degenerate responses: the API returned 200 but produced no
+        // usable content at all — no text and no tool calls (not even broken
+        // ones). This happens when the stream is truncated early or the API
+        // returns only a contextUsage event. Retry with backoff.
+        //
+        // When tool calls *were* present but all got dropped (empty/unparseable
+        // input), don't retry — the API did respond, it just sent malformed
+        // tool calls. Retrying would likely produce the same result. The
+        // stopReason fix below prevents the agent loop stall.
+        const hasText = textBlockIndex !== null && (output.content[textBlockIndex] as TextContent).text.length > 0;
+        if (!hasText && toolCalls.length === 0) {
+          if (retryCount < maxRetries) {
+            retryCount++;
+            const delayMs = Math.min(1000 * 2 ** (retryCount - 1), MAX_RETRY_DELAY);
+            console.warn(
+              `[pi-provider-kiro] Empty response (no text, no tool calls) — retrying (${retryCount}/${maxRetries})`,
+            );
+            // Reset output content for the retry
+            output.content = [];
+            await abortableDelay(delayMs, options?.signal);
+            continue;
+          }
+          console.warn(
+            `[pi-provider-kiro] Empty response after ${maxRetries} retries — returning stopReason:"stop" to avoid agent loop stall`,
+          );
+        }
+        // Use emittedToolCalls (not toolCalls.length) to avoid stopReason:"toolUse"
+        // when all tool calls were skipped due to empty/unparseable input — that
+        // combination (empty content + toolUse stop) causes pi's agent loop to
+        // stall waiting for tool results that will never arrive.
+        if (!receivedContextUsage && emittedToolCalls === 0) {
           output.stopReason = "length";
         } else {
-          output.stopReason = toolCalls.length > 0 ? "toolUse" : "stop";
+          output.stopReason = emittedToolCalls > 0 ? "toolUse" : "stop";
         }
         stream.push({ type: "done", reason: output.stopReason as "stop" | "toolUse", message: output });
         stream.end();
