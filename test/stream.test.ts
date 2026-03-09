@@ -1380,6 +1380,140 @@ describe("Feature 9: Streaming Integration", () => {
     vi.unstubAllGlobals();
   });
 
+  // =========================================================================
+  // Empty response / ghost tool call recovery (stopReason stall fix)
+  // =========================================================================
+
+  it("does not set stopReason to toolUse when all tool calls have empty input", async () => {
+    // Reproduces the bug: API returns a tool call with empty input + contextUsage.
+    // Before the fix, stopReason was "toolUse" with empty content → agent loop stall.
+    const toolPayload = '{"name":"bash","toolUseId":"tc1","input":"","stop":true}';
+    const mockFetch = mockFetchOk(`${toolPayload}{"contextUsagePercentage":10}`);
+    vi.stubGlobal("fetch", mockFetch);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const stream = streamKiro(makeModel({ reasoning: false }), makeContext(), { apiKey: "tok" });
+    const events = await collect(stream);
+
+    // No retry — tool calls were present (just malformed), so only 1 fetch call
+    expect(mockFetch).toHaveBeenCalledOnce();
+    const done = events.find((e) => e.type === "done");
+    expect(done).toBeDefined();
+    // Must NOT be "toolUse" — that would stall the agent loop
+    expect(done?.type === "done" && done.reason).not.toBe("toolUse");
+    expect(done?.type === "done" && done.message.content.filter((b) => b.type === "toolCall")).toHaveLength(0);
+
+    warnSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("does not set stopReason to toolUse when all tool calls have unparseable input", async () => {
+    const toolPayload = '{"name":"bash","toolUseId":"tc1","input":"not-json","stop":true}';
+    const mockFetch = mockFetchOk(`${toolPayload}{"contextUsagePercentage":10}`);
+    vi.stubGlobal("fetch", mockFetch);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const stream = streamKiro(makeModel({ reasoning: false }), makeContext(), { apiKey: "tok" });
+    const events = await collect(stream);
+
+    expect(mockFetch).toHaveBeenCalledOnce();
+    const done = events.find((e) => e.type === "done");
+    expect(done).toBeDefined();
+    expect(done?.type === "done" && done.reason).not.toBe("toolUse");
+
+    warnSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("retries on completely empty response (no text, no tool calls)", async () => {
+    // Simulates the degenerate API response: only contextUsage, no content or tools.
+    // Should retry up to maxRetries, then return without stalling.
+    const emptyResponse = '{"contextUsagePercentage":50}';
+    const goodResponse = '{"content":"recovered"}{"contextUsagePercentage":10}';
+
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: vi
+              .fn()
+              .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(emptyResponse) })
+              .mockResolvedValueOnce({ done: true, value: undefined }),
+          }),
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: vi
+              .fn()
+              .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(goodResponse) })
+              .mockResolvedValueOnce({ done: true, value: undefined }),
+          }),
+        },
+      });
+    vi.stubGlobal("fetch", mockFetch);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const stream = streamKiro(makeModel({ reasoning: false }), makeContext(), { apiKey: "tok" });
+    const events = await collect(stream);
+
+    // Should have retried: 2 fetch calls
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const done = events.find((e) => e.type === "done");
+    expect(done).toBeDefined();
+    expect(done?.type === "done" && done.message.stopReason).toBe("stop");
+    expect(
+      done?.type === "done" &&
+        done.message.content.some((b) => b.type === "text" && (b as TextContent).text === "recovered"),
+    ).toBe(true);
+
+    warnSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("returns stop (not toolUse) after max retries on persistent empty responses", async () => {
+    const emptyResponse = '{"contextUsagePercentage":50}';
+
+    // All 4 attempts return empty — need a fresh reader for each call
+    const makeEmptyResponse = () => ({
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: vi
+            .fn()
+            .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(emptyResponse) })
+            .mockResolvedValueOnce({ done: true, value: undefined }),
+        }),
+      },
+    });
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(makeEmptyResponse())
+      .mockResolvedValueOnce(makeEmptyResponse())
+      .mockResolvedValueOnce(makeEmptyResponse())
+      .mockResolvedValueOnce(makeEmptyResponse());
+    vi.stubGlobal("fetch", mockFetch);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const stream = streamKiro(makeModel({ reasoning: false }), makeContext(), { apiKey: "tok" });
+    const events = await collect(stream);
+
+    // 1 initial + 3 retries = 4 calls
+    expect(mockFetch).toHaveBeenCalledTimes(4);
+    const done = events.find((e) => e.type === "done");
+    expect(done).toBeDefined();
+    // Must be "stop", not "toolUse" — toolUse with empty content stalls the agent
+    expect(done?.type === "done" && done.reason).toBe("stop");
+    expect(done?.type === "done" && done.message.content).toHaveLength(0);
+
+    warnSpy.mockRestore();
+    vi.unstubAllGlobals();
+  }, 30000);
+
   it("keeps non-consecutive duplicate content events", async () => {
     const mockFetch = mockFetchChunked([
       '{"content":"A"}',
