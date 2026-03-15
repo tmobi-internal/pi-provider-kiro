@@ -7,8 +7,9 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { getKiroCliCredentials } from "./kiro-cli.js";
 import { kiroModels } from "./models.js";
 import type { KiroCredentials } from "./oauth.js";
-import { loginKiroBuilderID, refreshKiroToken } from "./oauth.js";
+import { loginKiro, refreshKiroToken } from "./oauth.js";
 import { streamKiro } from "./stream.js";
+import { fetchKiroUsage } from "./usage.js";
 
 export default function (pi: ExtensionAPI) {
   pi.registerProvider("kiro", {
@@ -16,8 +17,9 @@ export default function (pi: ExtensionAPI) {
     api: "kiro-api",
     models: kiroModels,
     oauth: {
-      name: "Kiro (AWS Builder ID)",
-      login: loginKiroBuilderID,
+      // Name reflects all supported auth methods: AWS Builder ID, Google, GitHub
+      name: "Kiro (Builder ID / Google / GitHub)",
+      login: loginKiro,
       refreshToken: refreshKiroToken,
       getApiKey: (cred: OAuthCredentials) => cred.access,
       getCliCredentials: getKiroCliCredentials,
@@ -27,6 +29,7 @@ export default function (pi: ExtensionAPI) {
           m.provider === "kiro" ? { ...m, baseUrl: `https://q.${region}.amazonaws.com/generateAssistantResponse` } : m,
         );
       },
+      fetchUsage: fetchKiroUsage,
       // biome-ignore lint/suspicious/noExplicitAny: ProviderConfig.oauth doesn't include getCliCredentials but OAuthProviderInterface does
     } as any,
     streamSimple: streamKiro,

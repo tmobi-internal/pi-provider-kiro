@@ -6,3 +6,4 @@ dist/
 .agent/
 .agents/
 .ralph/
+*.tgz

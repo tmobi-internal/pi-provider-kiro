@@ -1309,6 +1309,26 @@ describe("Feature 9: Streaming Integration", () => {
     expect(msg?.usage.output).toBe(200);
     expect(msg?.usage.totalTokens).toBe(700);
 
+    // contextPercent should still reflect the API's contextUsagePercentage,
+    // not be derived from the (overwritten) input token count
+    expect((msg?.usage as Record<string, unknown>).contextPercent).toBe(10);
+
+    vi.unstubAllGlobals();
+  });
+
+  it("passes through contextPercent even without usage event", async () => {
+    const mockFetch = mockFetchOk('{"content":"Hi"}{"contextUsagePercentage":42}');
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
+    const events = await collect(stream);
+    const done = events.find((e) => e.type === "done");
+    const msg = done?.type === "done" ? done.message : undefined;
+
+    expect((msg?.usage as Record<string, unknown>).contextPercent).toBe(42);
+    // input should be back-calculated from percentage
+    expect(msg?.usage.input).toBe(Math.round(0.42 * 200000));
+
     vi.unstubAllGlobals();
   });
 

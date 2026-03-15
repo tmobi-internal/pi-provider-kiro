@@ -3,9 +3,12 @@
 
 import { execFileSync, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import type { KiroAuthMethod, KiroCredentials } from "./oauth.js";
+
+const require = createRequire(import.meta.url);
 
 export function getKiroCliDbPath(): string | undefined {
   const p = platform();
@@ -17,7 +20,31 @@ export function getKiroCliDbPath(): string | undefined {
   return existsSync(dbPath) ? dbPath : undefined;
 }
 
+function getNodeSqlite(): typeof import("node:sqlite") | undefined {
+  try {
+    return require("node:sqlite") as typeof import("node:sqlite");
+  } catch {
+    return undefined;
+  }
+}
+
 function queryKiroCliDb(dbPath: string, sql: string): string | undefined {
+  const sqlite = getNodeSqlite();
+  if (sqlite) {
+    try {
+      const db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
+      try {
+        const rows = db.prepare(sql).all() as unknown[];
+        const result = JSON.stringify(rows);
+        return result === "[]" ? undefined : result;
+      } finally {
+        db.close();
+      }
+    } catch {
+      // Fall through to sqlite3 CLI fallback
+    }
+  }
+
   try {
     const result = execSync(`sqlite3 -json "${dbPath}" "${sql}"`, {
       encoding: "utf-8",
@@ -31,6 +58,21 @@ function queryKiroCliDb(dbPath: string, sql: string): string | undefined {
 }
 
 function execKiroCliDb(dbPath: string, sql: string): boolean {
+  const sqlite = getNodeSqlite();
+  if (sqlite) {
+    try {
+      const db = new sqlite.DatabaseSync(dbPath);
+      try {
+        db.exec(sql);
+        return true;
+      } finally {
+        db.close();
+      }
+    } catch {
+      // Fall through to sqlite3 CLI fallback
+    }
+  }
+
   try {
     execSync(`sqlite3 "${dbPath}"`, {
       input: sql,
@@ -137,6 +179,38 @@ function tryKiroCliToken(
     region,
     authMethod: "idc",
   };
+}
+
+// Re-export the internal function for use by getKiroCliSocialToken
+export { tryKiroCliToken };
+
+/**
+ * Get the social token (Google/GitHub) from kiro-cli if available.
+ * Returns undefined if no valid social token exists.
+ * This is used to prefer social login when the user has logged in that way.
+ */
+export function getKiroCliSocialToken(): KiroCredentials | undefined {
+  const dbPath = getKiroCliDbPath();
+  if (!dbPath) return undefined;
+  try {
+    return tryKiroCliToken(dbPath, "kirocli:social:token", "desktop");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Like getKiroCliSocialToken but returns credentials even when the access token
+ * is expired, as long as a refresh token exists.
+ */
+export function getKiroCliSocialTokenAllowExpired(): KiroCredentials | undefined {
+  const dbPath = getKiroCliDbPath();
+  if (!dbPath) return undefined;
+  try {
+    return tryKiroCliToken(dbPath, "kirocli:social:token", "desktop", true);
+  } catch {
+    return undefined;
+  }
 }
 
 const TOKEN_KEY_BY_AUTH_METHOD: Record<KiroAuthMethod, string[]> = {

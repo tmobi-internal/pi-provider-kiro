@@ -363,6 +363,11 @@ export function streamKiro(
             if (event.type === "contextUsage") {
               const pct = event.data.contextUsagePercentage;
               output.usage.input = Math.round((pct / 100) * model.contextWindow);
+              // Pass through the raw percentage so rho-web (and other UIs)
+              // can display it directly instead of back-calculating from
+              // input tokens / guessed context window — which breaks when
+              // the usage event later overwrites usage.input.
+              (output.usage as unknown as Record<string, unknown>).contextPercent = pct;
               receivedContextUsage = true;
               // Don't break the reader loop here — tool call input chunks
               // may still be pending in subsequent network packets. The

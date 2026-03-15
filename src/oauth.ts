@@ -1,10 +1,15 @@
-// Feature 3: OAuth — AWS Builder ID Device Code Flow
+// Feature 3: OAuth — Kiro Authentication
 //
-// Supports two auth methods:
+// Supports multiple auth methods:
 //   - "idc": AWS Builder ID or IAM Identity Center (SSO) via device code flow
-//   - "desktop": Kiro desktop app credentials (refresh via Kiro auth service)
+//   - "desktop": Google/GitHub social login via Kiro auth service (delegates to kiro-cli)
+//
+// Social login (Google/GitHub) uses PKCE with localhost callback, which requires
+// either a local browser or SSH port forwarding. We delegate to kiro-cli for this
+// flow since it already handles the complexity.
 
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@mariozechner/pi-ai";
+import { execFileSync } from "node:child_process";
 
 export const SSO_OIDC_ENDPOINT = "https://oidc.us-east-1.amazonaws.com";
 export const BUILDER_ID_START_URL = "https://view.awsapps.com/start";
@@ -18,6 +23,7 @@ export const SSO_SCOPES = [
 ];
 
 export type KiroAuthMethod = "idc" | "desktop";
+export type KiroLoginMethod = "auto" | "builder-id" | "google" | "github";
 
 export interface KiroCredentials extends OAuthCredentials {
   clientId: string;
@@ -26,15 +32,37 @@ export interface KiroCredentials extends OAuthCredentials {
   authMethod: KiroAuthMethod;
 }
 
-export async function loginKiroBuilderID(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
-  // First, try to load credentials from kiro-cli
-  const { getKiroCliCredentials, getKiroCliCredentialsAllowExpired, saveKiroCliCredentials } = await import(
-    "./kiro-cli.js"
-  );
-  const cliCreds = getKiroCliCredentials();
-  if (cliCreds) {
+/**
+ * Login to Kiro using the specified method.
+ *
+ * - "auto": Use existing kiro-cli credentials if available (any method)
+ * - "builder-id": AWS Builder ID via device code flow
+ * - "google" | "github": Social login via kiro-cli (requires kiro-cli installed)
+ */
+export async function loginKiro(
+  callbacks: OAuthLoginCallbacks,
+  preferredMethod: KiroLoginMethod = "auto",
+): Promise<OAuthCredentials> {
+  const { getKiroCliCredentials, getKiroCliCredentialsAllowExpired, saveKiroCliCredentials, getKiroCliSocialToken } =
+    await import("./kiro-cli.js");
+
+  // If user explicitly wants social login, delegate to kiro-cli
+  if (preferredMethod === "google" || preferredMethod === "github") {
+    return loginViaKiroCli(callbacks, preferredMethod);
+  }
+
+  // For "auto" or "builder-id", check for existing kiro-cli credentials
+  // Prefer social token if available (user explicitly logged in that way)
+  let cliCreds = getKiroCliSocialToken();
+  if (!cliCreds) {
+    cliCreds = getKiroCliCredentials();
+  }
+
+  if (cliCreds && (preferredMethod === "auto" || cliCreds.authMethod === "idc")) {
     (callbacks as unknown as { onProgress?: (msg: string) => void }).onProgress?.(
-      "Using existing kiro-cli credentials",
+      cliCreds.authMethod === "desktop"
+        ? "Using existing kiro-cli social credentials"
+        : "Using existing kiro-cli credentials",
     );
     return cliCreds;
   }
@@ -132,18 +160,66 @@ export async function loginKiroBuilderID(callbacks: OAuthLoginCallbacks): Promis
   throw new Error("Authorization timed out");
 }
 
+/**
+ * Delegate social login to kiro-cli.
+ * Requires kiro-cli to be installed and in PATH.
+ */
+async function loginViaKiroCli(
+  callbacks: OAuthLoginCallbacks,
+  provider: "google" | "github",
+): Promise<OAuthCredentials> {
+  const { getKiroCliCredentials, getKiroCliSocialToken } = await import("./kiro-cli.js");
+
+  (callbacks as unknown as { onProgress?: (msg: string) => void }).onProgress?.(
+    `Initiating ${provider} login via kiro-cli...`,
+  );
+
+  // Run kiro-cli login
+  try {
+    execFileSync("kiro-cli", ["login", "--license", "free"], {
+      timeout: 120000, // 2 minutes should be enough
+      stdio: "inherit", // Let kiro-cli handle the browser/auth UX
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    throw new Error(`kiro-cli login failed: ${msg}. Ensure kiro-cli is installed and in PATH.`);
+  }
+
+  // Read the new credentials from kiro-cli's DB (prefer social token)
+  const creds = getKiroCliSocialToken() || getKiroCliCredentials();
+  if (!creds) {
+    throw new Error("kiro-cli login completed but no credentials found in its database");
+  }
+
+  (callbacks as unknown as { onProgress?: (msg: string) => void }).onProgress?.(
+    creds.authMethod === "desktop" ? "Google/GitHub login successful" : "Login successful",
+  );
+
+  return creds;
+}
+
+/**
+ * Backward-compatible alias for loginKiro with Builder ID.
+ * @deprecated Use loginKiro instead.
+ */
+export async function loginKiroBuilderID(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
+  return loginKiro(callbacks, "builder-id");
+}
+
 // Token refresh buffer (5 minutes) baked into our expires timestamps at creation time.
 // The actual AWS token is valid for this much longer than credentials.expires indicates.
 const EXPIRES_BUFFER_MS = 5 * 60 * 1000;
 
 export async function refreshKiroToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
-  const { getKiroCliCredentials, getKiroCliCredentialsAllowExpired, saveKiroCliCredentials } = await import(
-    "./kiro-cli.js"
-  );
+  const { getKiroCliCredentials, getKiroCliCredentialsAllowExpired, saveKiroCliCredentials, getKiroCliSocialToken } =
+    await import("./kiro-cli.js");
 
-  // Layer 1: Pre-refresh check — kiro-cli may already have a fresh token,
-  // avoiding a doomed network refresh with a stale token.
-  const preCheckCreds = getKiroCliCredentials();
+  // Layer 1: Pre-refresh check — prefer social token if available (user logged in that way)
+  // Otherwise check for any valid kiro-cli token
+  let preCheckCreds = getKiroCliSocialToken();
+  if (!preCheckCreds) {
+    preCheckCreds = getKiroCliCredentials();
+  }
   if (preCheckCreds) {
     return preCheckCreds;
   }

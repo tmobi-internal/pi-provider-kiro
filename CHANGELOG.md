@@ -5,7 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-03-15
+
+### Added
+
+- Google and GitHub social login support via kiro-cli delegation
+- `getKiroCliSocialToken()` to prefer social credentials when available
+- OAuth name updated to "Kiro (Builder ID / Google / GitHub)" to reflect all auth methods
+
+### Changed
+
+- `loginKiro()` now prefers social tokens from kiro-cli if available
+- `refreshKiroToken()` checks social tokens first to respect user's chosen login method
+- Social login requires kiro-cli to be installed (delegates browser/PKCE flow)
+
+### Fixed
+
+- Pass through raw `contextUsagePercentage` as `usage.contextPercent` so UIs display accurate context usage instead of back-calculating from input tokens (which the usage event can overwrite with raw counts exceeding the context window)
 
 ## [0.3.0] - 2026-03-05
 
@@ -57,7 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: 17 models across 7 families, OAuth device code flow, kiro-cli SQLite credential fallback, streaming pipeline with thinking tag parser
 
-[Unreleased]: https://github.com/mikeyobrien/pi-provider-kiro/compare/v0.3.0...HEAD
+[0.4.0]: https://github.com/mikeyobrien/pi-provider-kiro/compare/v0.3.2...v0.4.0
 [0.3.0]: https://github.com/mikeyobrien/pi-provider-kiro/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/mikeyobrien/pi-provider-kiro/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/mikeyobrien/pi-provider-kiro/compare/v0.1.1...v0.2.1

@@ -32,16 +32,17 @@ describe("Feature 1: Extension Registration", () => {
     expect(config.models).toHaveLength(17);
   });
 
-  it("registers OAuth with name 'Kiro (AWS Builder ID)'", async () => {
+  it("registers OAuth with name 'Kiro (Builder ID / Google / GitHub)'", async () => {
     const mod = await import("../src/index.js");
     const { pi, registerProvider } = mockPi();
     mod.default(pi);
 
     const config = registerProvider.mock.calls[0][1];
-    expect(config.oauth.name).toBe("Kiro (AWS Builder ID)");
+    expect(config.oauth.name).toBe("Kiro (Builder ID / Google / GitHub)");
     expect(typeof config.oauth.login).toBe("function");
     expect(typeof config.oauth.refreshToken).toBe("function");
     expect(typeof config.oauth.getApiKey).toBe("function");
+    expect(typeof config.oauth.fetchUsage).toBe("function");
   });
 
   it("registers a streamSimple handler", async () => {

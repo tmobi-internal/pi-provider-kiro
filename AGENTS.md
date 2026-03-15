@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-pi extension that connects the pi coding agent to the Kiro API (AWS CodeWhisperer/Q). Provides 17 models across 7 families with OAuth authentication via AWS Builder ID.
+pi extension that connects the pi coding agent to the Kiro API (AWS CodeWhisperer/Q). Provides 17 models across 7 families with multi-provider authentication (AWS Builder ID, Google, GitHub).
 
 ## Directory Structure
 
@@ -13,8 +13,8 @@ pi-provider-kiro/
 ├── src/                    # TypeScript source (9 files, one feature each)
 │   ├── index.ts            # F1: Extension registration entry point
 │   ├── models.ts           # F2: Model catalog + ID resolution
-│   ├── oauth.ts            # F3: AWS Builder ID OAuth device code flow
-│   ├── kiro-cli.ts         # F4: kiro-cli SQLite credential fallback
+│   ├── oauth.ts            # F3: Multi-provider OAuth (Builder ID / Google / GitHub)
+│   ├── kiro-cli.ts         # F4: kiro-cli SQLite credential sharing
 │   ├── transform.ts        # F5: pi ↔ Kiro message transformation
 │   ├── history.ts          # F6: History truncation + sanitization
 │   ├── thinking-parser.ts  # F7: Streaming <thinking> tag parser
@@ -46,19 +46,25 @@ Raw bytes → `parseKiroEvents()` → typed `KiroStreamEvent` → `ThinkingTagPa
 On 413/too-large: error propagated immediately to the caller (no retry). The caller is responsible for handling context overflow (e.g., compaction or history trimming), matching kiro-cli behavior.
 
 ### Credential Cascade
-1. kiro-cli SQLite DB — tries IDC token first, then desktop/social token
+1. kiro-cli SQLite DB — checks social token first (`kirocli:social:token`), then IDC token
 2. OAuth device code flow (interactive, opens browser)
 
 ### Auth Methods
 - `idc`: AWS Builder ID or IAM Identity Center (SSO). Refresh via SSO OIDC endpoint. Token format: `refreshToken|clientId|clientSecret|idc`. Preferred — has clientId/clientSecret for refresh.
-- `desktop`: Kiro desktop app credentials. Refresh via `prod.{region}.auth.desktop.kiro.dev`. Token format: `refreshToken|desktop`
+- `desktop`: Google/GitHub social login via Kiro auth service. Refresh via `prod.{region}.auth.desktop.kiro.dev`. Token format: `refreshToken|desktop`
+
+### Login Methods
+Users can authenticate via:
+- **Builder ID**: Native device code flow (works in SSH/remote)
+- **Google**: Social login (delegates to `kiro-cli login`, requires local browser or SSH port forwarding)
+- **GitHub**: Social login (delegates to `kiro-cli login`, requires local browser or SSH port forwarding)
 
 ## Development
 
 ```bash
 npm run build     # tsc → dist/
 npm run check     # tsc --noEmit (type check only)
-npm test          # vitest run (108 tests)
+npm test          # vitest run (248 tests)
 npm run test:watch # vitest (watch mode)
 ```
 
@@ -84,3 +90,4 @@ npm run test:watch # vitest (watch mode)
 - `kiro-cli.ts` uses `sqlite3` CLI via `execSync`, not a Node native module
 - Output token count is estimated (`content.length / 4`), not from the API
 - `contextUsagePercentage` is the only usage metric Kiro provides; input tokens are back-calculated
+- Social login (Google/GitHub) requires `kiro-cli` to be installed — pi delegates the auth flow to it

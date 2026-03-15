@@ -7,6 +7,8 @@ import { loginKiroBuilderID, refreshKiroToken } from "../src/oauth.js";
 vi.mock("../src/kiro-cli.js", () => ({
   getKiroCliCredentials: vi.fn(() => undefined),
   getKiroCliCredentialsAllowExpired: vi.fn(() => undefined),
+  getKiroCliSocialToken: vi.fn(() => undefined),
+  getKiroCliSocialTokenAllowExpired: vi.fn(() => undefined),
   saveKiroCliCredentials: vi.fn(),
 }));
 

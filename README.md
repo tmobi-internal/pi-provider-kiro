@@ -41,7 +41,12 @@ Then log in:
 /login kiro
 ```
 
-This opens a browser for AWS Builder ID authentication. If you have [kiro-cli](https://kiro.dev) installed and already logged in, credentials are picked up automatically.
+This opens a browser for authentication. You can choose from:
+- **AWS Builder ID** — Native device code flow (works in SSH/remote environments)
+- **Google** — Social login (requires local browser or SSH port forwarding)
+- **GitHub** — Social login (requires local browser or SSH port forwarding)
+
+If you have [kiro-cli](https://kiro.dev) installed and already logged in, credentials are picked up automatically — no second login needed.
 
 ## Usage
 
@@ -58,7 +63,7 @@ Reasoning is automatically enabled for supported models. Use `/reasoning` to adj
 ```bash
 npm run build       # Compile TypeScript
 npm run check       # Type check (no emit)
-npm test            # Run all 108 tests
+npm test            # Run all 248 tests
 npm run test:watch  # Watch mode
 ```
 
@@ -70,8 +75,8 @@ The extension is organized as one feature per file:
 src/
 ├── index.ts            # Extension registration
 ├── models.ts           # 17 model definitions + ID resolution
-├── oauth.ts            # AWS Builder ID OAuth flow
-├── kiro-cli.ts         # kiro-cli credential fallback
+├── oauth.ts            # Multi-provider auth (Builder ID / Google / GitHub)
+├── kiro-cli.ts         # kiro-cli credential sharing
 ├── transform.ts        # Message format conversion
 ├── history.ts          # Conversation history management
 ├── thinking-parser.ts  # Streaming <thinking> tag parser
