@@ -191,14 +191,14 @@ async function postOperation<TResponse>(
       "X-Amz-Target": target,
     },
     body: JSON.stringify(body),
-  })
+  });
 
   if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`${target} failed: ${response.status} ${response.statusText}${text ? ` ${text}` : ""}`)
+    const text = await response.text();
+    throw new Error(`${target} failed: ${response.status} ${response.statusText}${text ? ` ${text}` : ""}`);
   }
 
-  return (await response.json()) as TResponse
+  return (await response.json()) as TResponse;
 }
 
 async function listProfileArn(credentials: OAuthCredentials): Promise<string | undefined> {
@@ -207,15 +207,15 @@ async function listProfileArn(credentials: OAuthCredentials): Promise<string | u
       credentials,
       "AmazonCodeWhispererService.ListAvailableProfiles",
       {},
-    )
-    return response.profiles?.find((profile) => profile.arn)?.arn
+    );
+    return response.profiles?.find((profile) => profile.arn)?.arn;
   } catch {
-    return undefined
+    return undefined;
   }
 }
 
 function buildUsageBodies(profileArn: string | undefined): Array<Record<string, unknown>> {
-  const maybeProfile = profileArn ? { profileArn } : {}
+  const maybeProfile = profileArn ? { profileArn } : {};
   return [
     { ...maybeProfile, origin: "CLI", resourceType: "CREDIT", isEmailRequired: false },
     { ...maybeProfile, origin: "CLI", resourceType: "CREDIT" },
@@ -223,7 +223,7 @@ function buildUsageBodies(profileArn: string | undefined): Array<Record<string, 
     { ...maybeProfile, origin: "CHATBOT", resourceType: "CREDIT", isEmailRequired: false },
     { ...maybeProfile, origin: "CHATBOT", resourceType: "CREDIT" },
     maybeProfile,
-  ]
+  ];
 }
 
 async function tryUsageBodies(
@@ -231,49 +231,49 @@ async function tryUsageBodies(
   bodies: Array<Record<string, unknown>>,
   errors: string[],
 ): Promise<KiroGetUsageLimitsResponse | undefined> {
-  const seen = new Set<string>()
+  const seen = new Set<string>();
 
   for (const body of bodies) {
-    const key = JSON.stringify(body)
-    if (seen.has(key)) continue
-    seen.add(key)
+    const key = JSON.stringify(body);
+    if (seen.has(key)) continue;
+    seen.add(key);
 
     try {
       return await postOperation<KiroGetUsageLimitsResponse>(
         credentials,
         "AmazonCodeWhispererService.GetUsageLimits",
         body,
-      )
+      );
     } catch (error) {
-      errors.push(error instanceof Error ? error.message : String(error))
+      errors.push(error instanceof Error ? error.message : String(error));
     }
   }
 
-  return undefined
+  return undefined;
 }
 
 async function fetchRawUsage(credentials: OAuthCredentials): Promise<KiroGetUsageLimitsResponse> {
-  const errors: string[] = []
+  const errors: string[] = [];
 
-  const direct = await tryUsageBodies(credentials, buildUsageBodies(undefined), errors)
-  if (direct) return direct
+  const direct = await tryUsageBodies(credentials, buildUsageBodies(undefined), errors);
+  if (direct) return direct;
 
-  const profileArn = await listProfileArn(credentials)
+  const profileArn = await listProfileArn(credentials);
   if (profileArn) {
-    const profiled = await tryUsageBodies(credentials, buildUsageBodies(profileArn), errors)
-    if (profiled) return profiled
+    const profiled = await tryUsageBodies(credentials, buildUsageBodies(profileArn), errors);
+    if (profiled) return profiled;
   }
 
-  throw new Error(errors.join(" | ") || "GetUsageLimits failed")
+  throw new Error(errors.join(" | ") || "GetUsageLimits failed");
 }
 
 export async function fetchKiroUsage(credentials: OAuthCredentials): Promise<KiroProviderUsage> {
-  const raw = await fetchRawUsage(credentials)
+  const raw = await fetchRawUsage(credentials);
   const usageBuckets = raw.usageBreakdownList?.length
     ? raw.usageBreakdownList.map(mapBucket)
     : raw.usageBreakdown
       ? [mapBucket(raw.usageBreakdown, 0)]
-      : []
+      : [];
 
   return {
     summary: raw.subscriptionInfo?.subscriptionTitle,
@@ -284,5 +284,5 @@ export async function fetchKiroUsage(credentials: OAuthCredentials): Promise<Kir
     manageUrl: MANAGE_USAGE_URL,
     usageBuckets,
     raw: raw as Record<string, unknown>,
-  }
+  };
 }

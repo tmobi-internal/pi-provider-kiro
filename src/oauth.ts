@@ -8,8 +8,8 @@
 // either a local browser or SSH port forwarding. We delegate to kiro-cli for this
 // flow since it already handles the complexity.
 
-import type { OAuthCredentials, OAuthLoginCallbacks } from "@mariozechner/pi-ai";
 import { execFileSync } from "node:child_process";
+import type { OAuthCredentials, OAuthLoginCallbacks } from "@mariozechner/pi-ai";
 
 export const SSO_OIDC_ENDPOINT = "https://oidc.us-east-1.amazonaws.com";
 export const BUILDER_ID_START_URL = "https://view.awsapps.com/start";
