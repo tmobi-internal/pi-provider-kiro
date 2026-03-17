@@ -128,8 +128,7 @@ export function streamKiro(
     try {
       let accessToken = options?.apiKey;
       if (!accessToken) throw new Error("Kiro credentials not set. Run /login kiro or install kiro-cli.");
-      const region = "us-east-1";
-      const endpoint = `https://q.${region}.amazonaws.com/generateAssistantResponse`;
+      const endpoint = model.baseUrl || "https://q.us-east-1.amazonaws.com/generateAssistantResponse";
       const kiroModelId = resolveKiroModel(model.id);
       const thinkingEnabled = !!options?.reasoning || model.reasoning;
       let systemPrompt = context.systemPrompt ?? "";

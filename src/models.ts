@@ -31,6 +31,29 @@ export function resolveKiroModel(modelId: string): string {
   return kiroId;
 }
 
+/**
+ * Map an SSO/OIDC region to the Kiro API region.
+ *
+ * The Kiro Q API is only deployed in a subset of regions. Tokens issued by
+ * an SSO instance in e.g. eu-west-1 must be sent to the eu-central-1 API
+ * endpoint. This mirrors the endpoint resolution that kiro-cli performs
+ * internally via the AWS SDK partition resolver.
+ */
+const API_REGION_MAP: Record<string, string> = {
+  "eu-west-1": "eu-central-1",
+  "eu-west-2": "eu-central-1",
+  "eu-west-3": "eu-central-1",
+  "eu-north-1": "eu-central-1",
+  "eu-south-1": "eu-central-1",
+  "eu-south-2": "eu-central-1",
+  "eu-central-2": "eu-central-1",
+};
+
+export function resolveApiRegion(ssoRegion: string | undefined): string {
+  if (!ssoRegion) return "us-east-1";
+  return API_REGION_MAP[ssoRegion] ?? ssoRegion;
+}
+
 const BASE_URL = "https://q.us-east-1.amazonaws.com/generateAssistantResponse";
 const ZERO_COST = Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
 
