@@ -79,4 +79,19 @@ describe("Feature 1: Extension Registration", () => {
     const modified = config.oauth.modifyModels(models, creds);
     expect(modified[0].baseUrl).toBe(`https://q.${expectedApiRegion}.amazonaws.com/generateAssistantResponse`);
   });
+
+  it("modifyModels filters out unavailable models for EU regions", async () => {
+    const mod = await import("../src/index.js");
+    const { pi, registerProvider } = mockPi();
+    mod.default(pi);
+
+    const config = registerProvider.mock.calls[0][1];
+    const models = kiroModels.map((m) => ({ ...m, provider: "kiro", api: "kiro-api", baseUrl: "old" }));
+    const creds = { access: "x", refresh: "x", expires: 0, clientId: "", clientSecret: "", region: "eu-west-1" };
+    const modified = config.oauth.modifyModels(models, creds);
+    const ids = modified.map((m: { id: string }) => m.id);
+    expect(modified.length).toBeLessThan(models.length);
+    expect(ids).not.toContain("deepseek-3-2");
+    expect(ids).toContain("claude-sonnet-4-6");
+  });
 });
