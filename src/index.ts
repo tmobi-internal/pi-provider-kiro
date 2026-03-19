@@ -5,7 +5,7 @@
 import type { Api, Model, OAuthCredentials } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { getKiroCliCredentials } from "./kiro-cli.js";
-import { kiroModels } from "./models.js";
+import { filterModelsByRegion, kiroModels, resolveApiRegion } from "./models.js";
 import type { KiroCredentials } from "./oauth.js";
 import { loginKiro, refreshKiroToken } from "./oauth.js";
 import { streamKiro } from "./stream.js";
@@ -24,9 +24,9 @@ export default function (pi: ExtensionAPI) {
       getApiKey: (cred: OAuthCredentials) => cred.access,
       getCliCredentials: getKiroCliCredentials,
       modifyModels: (models: Model<Api>[], cred: OAuthCredentials) => {
-        const region = (cred as KiroCredentials).region || "us-east-1";
-        return models.map((m: Model<Api>) =>
-          m.provider === "kiro" ? { ...m, baseUrl: `https://q.${region}.amazonaws.com/generateAssistantResponse` } : m,
+        const apiRegion = resolveApiRegion((cred as KiroCredentials).region);
+        return filterModelsByRegion(models, apiRegion).map((m: Model<Api>) =>
+          m.provider === "kiro" ? { ...m, baseUrl: `https://q.${apiRegion}.amazonaws.com/generateAssistantResponse` } : m,
         );
       },
       fetchUsage: fetchKiroUsage,
