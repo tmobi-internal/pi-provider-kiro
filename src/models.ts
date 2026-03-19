@@ -102,7 +102,9 @@ const MODELS_BY_REGION: Record<string, Set<string>> = {
 export function filterModelsByRegion<T extends { id: string }>(models: T[], apiRegion: string): T[] {
   const allowed = MODELS_BY_REGION[apiRegion];
   if (!allowed) {
-    console.warn(`[pi-provider-kiro] Unknown API region "${apiRegion}" — no models available. Update MODELS_BY_REGION in models.ts.`);
+    console.warn(
+      `[pi-provider-kiro] Unknown API region "${apiRegion}" — no models available. Update MODELS_BY_REGION in models.ts.`,
+    );
     return [];
   }
   return models.filter((m) => allowed.has(m.id));

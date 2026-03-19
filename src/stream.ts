@@ -19,7 +19,7 @@ import { parseKiroEvents } from "./event-parser.js";
 import { addPlaceholderTools, HISTORY_LIMIT, truncateHistory } from "./history.js";
 import { getKiroCliCredentials } from "./kiro-cli.js";
 import { resolveKiroModel } from "./models.js";
-import { decideRetry, isTooBigError, MAX_RETRY_DELAY, retryConfig } from "./retry.js";
+import { exponentialBackoff, isNonRetryableBodyError, isTooBigError, MAX_RETRY_DELAY, retryConfig } from "./retry.js";
 import { ThinkingTagParser } from "./thinking-parser.js";
 import { countTokens } from "./tokenizer.js";
 import {
@@ -276,19 +276,20 @@ export function streamKiro(
           } catch {
             errText = "";
           }
-          const decision = decideRetry(response.status, errText, retryCount, maxRetries);
-          if (decision.shouldRetry) {
+          if (response.status === 403 && retryCount < maxRetries) {
             retryCount++;
             // On 403, try to get a fresh token before retrying — the current
             // one may have been rotated by kiro-cli or another session.
-            if (response.status === 403) {
-              const freshCreds = getKiroCliCredentials();
-              if (freshCreds?.access) accessToken = freshCreds.access;
-            }
-            if (decision.delayMs > 0) {
-              await abortableDelay(decision.delayMs, options?.signal);
-            }
+            const freshCreds = getKiroCliCredentials();
+            if (freshCreds?.access) accessToken = freshCreds.access;
+            const delayMs = exponentialBackoff(retryCount - 1, 500, MAX_RETRY_DELAY);
+            await abortableDelay(delayMs, options?.signal);
             continue;
+          }
+          // Avoid pi-coding-agent's outer auto-retry from treating known
+          // Kiro quota/capacity body markers as generic retryable 429s.
+          if (isNonRetryableBodyError(errText)) {
+            throw new Error(`Kiro API error: ${errText || response.statusText}`);
           }
           // Format error so pi-ai's isContextOverflow() recognizes it
           if (isTooBigError(response.status, errText)) {
@@ -429,7 +430,7 @@ export function streamKiro(
           // Timed out or received error mid-stream: retry with backoff
           if (retryCount < maxRetries) {
             retryCount++;
-            const delayMs = Math.min(1000 * 2 ** (retryCount - 1), MAX_RETRY_DELAY);
+            const delayMs = exponentialBackoff(retryCount - 1, 1000, MAX_RETRY_DELAY);
             await abortableDelay(delayMs, options?.signal);
             continue;
           }
@@ -503,7 +504,7 @@ export function streamKiro(
         if (!hasText && !sawAnyToolCalls) {
           if (retryCount < maxRetries) {
             retryCount++;
-            const delayMs = Math.min(1000 * 2 ** (retryCount - 1), MAX_RETRY_DELAY);
+            const delayMs = exponentialBackoff(retryCount - 1, 1000, MAX_RETRY_DELAY);
             console.warn(
               `[pi-provider-kiro] Empty response (no text, no tool calls) — retrying (${retryCount}/${maxRetries})`,
             );

@@ -26,7 +26,9 @@ export default function (pi: ExtensionAPI) {
       modifyModels: (models: Model<Api>[], cred: OAuthCredentials) => {
         const apiRegion = resolveApiRegion((cred as KiroCredentials).region);
         return filterModelsByRegion(models, apiRegion).map((m: Model<Api>) =>
-          m.provider === "kiro" ? { ...m, baseUrl: `https://q.${apiRegion}.amazonaws.com/generateAssistantResponse` } : m,
+          m.provider === "kiro"
+            ? { ...m, baseUrl: `https://q.${apiRegion}.amazonaws.com/generateAssistantResponse` }
+            : m,
         );
       },
       fetchUsage: fetchKiroUsage,
