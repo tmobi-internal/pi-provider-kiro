@@ -68,7 +68,10 @@ describe("Feature 1: Extension Registration", () => {
     { ssoRegion: "eu-north-1", expectedApiRegion: "eu-central-1" },
     { ssoRegion: "us-east-1", expectedApiRegion: "us-east-1" },
     { ssoRegion: undefined, expectedApiRegion: "us-east-1" },
-  ])("modifyModels maps SSO region $ssoRegion to API region $expectedApiRegion", async ({ ssoRegion, expectedApiRegion }) => {
+  ])("modifyModels maps SSO region $ssoRegion to API region $expectedApiRegion", async ({
+    ssoRegion,
+    expectedApiRegion,
+  }) => {
     const mod = await import("../src/index.js");
     const { pi, registerProvider } = mockPi();
     mod.default(pi);

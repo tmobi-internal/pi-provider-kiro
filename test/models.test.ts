@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { KIRO_MODEL_IDS, filterModelsByRegion, kiroModels, resolveKiroModel } from "../src/models.js";
+import { filterModelsByRegion, KIRO_MODEL_IDS, kiroModels, resolveKiroModel } from "../src/models.js";
 
 describe("Feature 2: Model Definitions", () => {
   describe("resolveKiroModel", () => {
