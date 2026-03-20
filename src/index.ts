@@ -25,11 +25,14 @@ export default function (pi: ExtensionAPI) {
       getCliCredentials: getKiroCliCredentials,
       modifyModels: (models: Model<Api>[], cred: OAuthCredentials) => {
         const apiRegion = resolveApiRegion((cred as KiroCredentials).region);
-        return filterModelsByRegion(models, apiRegion).map((m: Model<Api>) =>
-          m.provider === "kiro"
-            ? { ...m, baseUrl: `https://q.${apiRegion}.amazonaws.com/generateAssistantResponse` }
-            : m,
-        );
+        const kiroOnly = models.filter((m: Model<Api>) => m.provider === "kiro");
+        const nonKiro = models.filter((m: Model<Api>) => m.provider !== "kiro");
+        const modifiedKiro = filterModelsByRegion(kiroOnly, apiRegion).map((m: Model<Api>) => ({
+          ...m,
+          baseUrl: `https://q.${apiRegion}.amazonaws.com/generateAssistantResponse`,
+        }));
+
+        return [...nonKiro, ...modifiedKiro];
       },
       fetchUsage: fetchKiroUsage,
       // biome-ignore lint/suspicious/noExplicitAny: ProviderConfig.oauth doesn't include getCliCredentials but OAuthProviderInterface does

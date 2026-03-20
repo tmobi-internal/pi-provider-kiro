@@ -97,4 +97,34 @@ describe("Feature 1: Extension Registration", () => {
     expect(ids).not.toContain("deepseek-3-2");
     expect(ids).toContain("claude-sonnet-4-6");
   });
+
+  it("modifyModels preserves non-kiro provider models", async () => {
+    const mod = await import("../src/index.js");
+    const { pi, registerProvider } = mockPi();
+    mod.default(pi);
+
+    const config = registerProvider.mock.calls[0][1];
+    const kiro = kiroModels.map((m) => ({ ...m, provider: "kiro", api: "kiro-api", baseUrl: "old" }));
+    const codex = [
+      {
+        id: "gpt-5.4",
+        name: "GPT-5.4",
+        provider: "openai-codex",
+        api: "openai",
+        baseUrl: "https://example.com",
+      },
+    ];
+    const creds = { access: "x", refresh: "x", expires: 0, clientId: "", clientSecret: "", region: "eu-west-1" };
+    const modified = config.oauth.modifyModels([...kiro, ...codex], creds);
+
+    expect(modified).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "gpt-5.4",
+          provider: "openai-codex",
+          baseUrl: "https://example.com",
+        }),
+      ]),
+    );
+  });
 });
