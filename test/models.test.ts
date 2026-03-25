@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterModelsByRegion, KIRO_MODEL_IDS, kiroModels, resolveKiroModel } from "../src/models.js";
+import { filterModelsByRegion, KIRO_MODEL_IDS, kiroModels, resolveApiRegion, resolveKiroModel } from "../src/models.js";
 
 describe("Feature 2: Model Definitions", () => {
   describe("resolveKiroModel", () => {
@@ -35,6 +35,24 @@ describe("Feature 2: Model Definitions", () => {
   describe("KIRO_MODEL_IDS", () => {
     it("contains 17 model IDs", () => {
       expect(KIRO_MODEL_IDS.size).toBe(17);
+    });
+  });
+
+  describe("resolveApiRegion", () => {
+    it("maps us-east-2 to us-east-1", () => {
+      expect(resolveApiRegion("us-east-2")).toBe("us-east-1");
+    });
+
+    it("maps eu-west-1 to eu-central-1", () => {
+      expect(resolveApiRegion("eu-west-1")).toBe("eu-central-1");
+    });
+
+    it("passes through us-east-1 unchanged", () => {
+      expect(resolveApiRegion("us-east-1")).toBe("us-east-1");
+    });
+
+    it("defaults to us-east-1 when undefined", () => {
+      expect(resolveApiRegion(undefined)).toBe("us-east-1");
     });
   });
 
