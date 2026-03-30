@@ -522,7 +522,96 @@ describe("Feature 9: Streaming Integration", () => {
   });
 
   // =========================================================================
-  // Tool call without result in context (pi-mono: tool-call-without-result.test.ts)
+  // Images in history don't break session (regression)
+  // =========================================================================
+
+  it("strips images from history entries so they don't bloat the request", async () => {
+    const imageContent: ImageContent = { type: "image", data: "x".repeat(100000), mimeType: "image/png" };
+    const context: Context = {
+      systemPrompt: "You are helpful",
+      messages: [
+        { role: "user", content: [{ type: "text", text: "Look at this" }, imageContent], timestamp: ts },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "I see a cat" }],
+          api: "kiro-api",
+          provider: "kiro",
+          model: "claude-sonnet-4-5",
+          usage: zeroUsage,
+          stopReason: "stop",
+          timestamp: ts,
+        } as AssistantMessage,
+        { role: "user", content: "What color was it?", timestamp: ts },
+      ],
+    };
+    const mockFetch = mockFetchOk('{"content":"It was orange."}{"contextUsagePercentage":5}');
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), context, { apiKey: "tok" });
+    const events = await collect(stream);
+
+    const done = events.find((e) => e.type === "done");
+    expect(done).toBeDefined();
+    expect(done?.type === "done" && done.message.stopReason).toBe("stop");
+
+    // History should NOT contain the image base64 data
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const historyStr = JSON.stringify(body.conversationState.history ?? []);
+    expect(historyStr).not.toContain("x".repeat(1000));
+    // But the history entry text should still be there
+    expect(historyStr).toContain("Look at this");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("handles multi-turn with images without exceeding size limits", async () => {
+    const largeImage: ImageContent = { type: "image", data: "y".repeat(500000), mimeType: "image/jpeg" };
+    const context: Context = {
+      systemPrompt: "You are helpful",
+      messages: [
+        { role: "user", content: [{ type: "text", text: "Image 1" }, largeImage], timestamp: ts },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Got it" }],
+          api: "kiro-api",
+          provider: "kiro",
+          model: "claude-sonnet-4-5",
+          usage: zeroUsage,
+          stopReason: "stop",
+          timestamp: ts,
+        } as AssistantMessage,
+        { role: "user", content: [{ type: "text", text: "Image 2" }, largeImage], timestamp: ts },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Got that too" }],
+          api: "kiro-api",
+          provider: "kiro",
+          model: "claude-sonnet-4-5",
+          usage: zeroUsage,
+          stopReason: "stop",
+          timestamp: ts,
+        } as AssistantMessage,
+        { role: "user", content: "Describe both images", timestamp: ts },
+      ],
+    };
+    const mockFetch = mockFetchOk('{"content":"Both were photos."}{"contextUsagePercentage":5}');
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), context, { apiKey: "tok" });
+    const events = await collect(stream);
+
+    const done = events.find((e) => e.type === "done");
+    expect(done).toBeDefined();
+
+    // Request body should be well under the limit (no image bloat)
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const bodySize = JSON.stringify(body).length;
+    expect(bodySize).toBeLessThan(850000);
+
+    vi.unstubAllGlobals();
+  });
+
+  // =========================================================================
   // =========================================================================
 
   it("handles assistant with tool calls followed by user message (no tool results)", async () => {

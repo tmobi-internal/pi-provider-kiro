@@ -5,9 +5,10 @@ import {
   HISTORY_LIMIT,
   injectSyntheticToolCalls,
   sanitizeHistory,
+  stripHistoryImages,
   truncateHistory,
 } from "../src/history.js";
-import type { KiroHistoryEntry, KiroToolResult, KiroToolSpec, KiroToolUse } from "../src/transform.js";
+import type { KiroHistoryEntry, KiroImage, KiroToolResult, KiroToolSpec, KiroToolUse } from "../src/transform.js";
 
 const userEntry = (content: string, toolResults?: KiroToolResult[]): KiroHistoryEntry => ({
   userInputMessage: {
@@ -135,6 +136,109 @@ describe("Feature 6: History Management", () => {
 
     it("returns empty set for no tool uses", () => {
       expect(extractToolNamesFromHistory([userEntry("hi")])).toEqual(new Set());
+    });
+  });
+
+  describe("stripHistoryImages", () => {
+    it("removes images from user input messages in history", () => {
+      const h: KiroHistoryEntry[] = [
+        {
+          userInputMessage: {
+            content: "Look at this image",
+            modelId: "M",
+            origin: "AI_EDITOR",
+            images: [{ format: "png", source: { bytes: "base64data" } }],
+          },
+        },
+        assistantEntry("I see the image"),
+      ];
+      const stripped = stripHistoryImages(h);
+      expect(stripped[0].userInputMessage?.images).toBeUndefined();
+      expect(stripped[0].userInputMessage?.content).toBe("Look at this image");
+      expect(stripped[1].assistantResponseMessage?.content).toBe("I see the image");
+    });
+
+    it("preserves entries without images unchanged", () => {
+      const h: KiroHistoryEntry[] = [userEntry("hello"), assistantEntry("hi")];
+      const stripped = stripHistoryImages(h);
+      expect(stripped).toEqual(h);
+    });
+
+    it("removes images from tool result messages in history", () => {
+      const h: KiroHistoryEntry[] = [
+        userEntry("go"),
+        assistantEntry("ok", [{ name: "screenshot", toolUseId: "tc1", input: {} }]),
+        {
+          userInputMessage: {
+            content: "Tool results provided.",
+            modelId: "M",
+            origin: "AI_EDITOR",
+            images: [{ format: "png", source: { bytes: "screenshot-data" } }],
+            userInputMessageContext: {
+              toolResults: [{ toolUseId: "tc1", content: [{ text: "ok" }], status: "success" as const }],
+            },
+          },
+        },
+      ];
+      const stripped = stripHistoryImages(h);
+      expect(stripped[2].userInputMessage?.images).toBeUndefined();
+      expect(stripped[2].userInputMessage?.userInputMessageContext?.toolResults).toHaveLength(1);
+    });
+
+    it("does not mutate the original history array", () => {
+      const images = [{ format: "png", source: { bytes: "data" } }];
+      const h: KiroHistoryEntry[] = [
+        {
+          userInputMessage: { content: "hi", modelId: "M", origin: "AI_EDITOR", images },
+        },
+      ];
+      stripHistoryImages(h);
+      expect(h[0].userInputMessage?.images).toEqual(images);
+    });
+  });
+
+  describe("truncateHistory with images", () => {
+    it("strips images from history entries during truncation", () => {
+      const h: KiroHistoryEntry[] = [
+        {
+          userInputMessage: {
+            content: "Look at this",
+            modelId: "M",
+            origin: "AI_EDITOR",
+            images: [{ format: "png", source: { bytes: "x".repeat(1000) } }],
+          },
+        },
+        assistantEntry("I see it"),
+        userEntry("thanks"),
+        assistantEntry("welcome"),
+      ];
+      const result = truncateHistory(h, HISTORY_LIMIT);
+      // All image data should be stripped from history
+      for (const entry of result) {
+        expect(entry.userInputMessage?.images).toBeUndefined();
+      }
+    });
+
+    it("converges when a single image entry exceeds the limit", () => {
+      const hugeImage = "x".repeat(2_000_000); // 2MB base64
+      const h: KiroHistoryEntry[] = [
+        {
+          userInputMessage: {
+            content: "Look at this huge image",
+            modelId: "M",
+            origin: "AI_EDITOR",
+            images: [{ format: "png", source: { bytes: hugeImage } }],
+          },
+        },
+        assistantEntry("I analyzed the image"),
+        userEntry("what did you see?"),
+        assistantEntry("A cat"),
+      ];
+      const result = truncateHistory(h, HISTORY_LIMIT);
+      const resultSize = JSON.stringify(result).length;
+      expect(resultSize).toBeLessThanOrEqual(HISTORY_LIMIT);
+      // Should still have entries (not wiped out)
+      expect(result.length).toBeGreaterThan(0);
     });
   });
 

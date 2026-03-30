@@ -4,6 +4,16 @@ import type { KiroHistoryEntry, KiroToolSpec } from "./transform.js";
 
 export const HISTORY_LIMIT = 850000;
 
+/** Remove images from history entries — they've already been processed by the
+ *  model in previous turns and re-sending them wastes context / causes 413s. */
+export function stripHistoryImages(history: KiroHistoryEntry[]): KiroHistoryEntry[] {
+  return history.map((entry) => {
+    if (!entry.userInputMessage?.images) return entry;
+    const { images, ...rest } = entry.userInputMessage;
+    return { ...entry, userInputMessage: { ...rest } };
+  });
+}
+
 export function sanitizeHistory(history: KiroHistoryEntry[]): KiroHistoryEntry[] {
   const result: KiroHistoryEntry[] = [];
   for (let i = 0; i < history.length; i++) {
@@ -57,7 +67,7 @@ export function injectSyntheticToolCalls(history: KiroHistoryEntry[]): KiroHisto
 }
 
 export function truncateHistory(history: KiroHistoryEntry[], limit: number): KiroHistoryEntry[] {
-  let sanitized = sanitizeHistory(history);
+  let sanitized = sanitizeHistory(stripHistoryImages(history));
   let historySize = JSON.stringify(sanitized).length;
   while (historySize > limit && sanitized.length > 2) {
     sanitized.shift();
