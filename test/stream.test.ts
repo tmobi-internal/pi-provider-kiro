@@ -992,18 +992,14 @@ describe("Feature 9: Streaming Integration", () => {
     const toolPayload = '{"name":"bash","toolUseId":"tc1","input":"","stop":true}';
     const mockFetch = mockFetchOk(`${toolPayload}{"contextUsagePercentage":10}`);
     vi.stubGlobal("fetch", mockFetch);
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const stream = streamKiro(makeModel({ reasoning: false }), makeContext(), { apiKey: "tok" });
     const events = await collect(stream);
 
-    // Empty string fails JSON.parse, so should warn and skip the tool call
-    expect(warnSpy).toHaveBeenCalledOnce();
-
+    // Empty input is treated as {} (valid zero-arg tool call), not skipped
     const tcEnd = events.find((e) => e.type === "toolcall_end");
-    expect(tcEnd).toBeUndefined();
+    expect(tcEnd).toBeDefined();
 
-    warnSpy.mockRestore();
     vi.unstubAllGlobals();
   });
 
@@ -1099,12 +1095,16 @@ describe("Feature 9: Streaming Integration", () => {
     // reader.cancel() returns a rejected promise — simulates cancel on an
     // already-errored stream (common when abort fires mid-read).
     const cancelError = new Error("stream already errored");
+    let cancelCallCount = 0;
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       body: {
         getReader: () => ({
           read: () => new Promise(() => {}), // never resolves → timeout wins
-          cancel: vi.fn().mockRejectedValue(cancelError),
+          cancel: () => {
+            cancelCallCount++;
+            return Promise.reject(cancelError);
+          },
         }),
       },
     });
@@ -1547,26 +1547,22 @@ describe("Feature 9: Streaming Integration", () => {
   // Empty response / ghost tool call recovery (stopReason stall fix)
   // =========================================================================
 
-  it("does not set stopReason to toolUse when all tool calls have empty input", async () => {
-    // Reproduces the bug: API returns a tool call with empty input + contextUsage.
-    // Before the fix, stopReason was "toolUse" with empty content → agent loop stall.
+  it("treats tool calls with empty input as valid zero-arg calls", async () => {
+    // Empty input is normalized to {} — a valid zero-arg tool call.
+    // stopReason should be "toolUse" so the agent loop processes the result.
     const toolPayload = '{"name":"bash","toolUseId":"tc1","input":"","stop":true}';
     const mockFetch = mockFetchOk(`${toolPayload}{"contextUsagePercentage":10}`);
     vi.stubGlobal("fetch", mockFetch);
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const stream = streamKiro(makeModel({ reasoning: false }), makeContext(), { apiKey: "tok" });
     const events = await collect(stream);
 
-    // No retry — tool calls were present (just malformed), so only 1 fetch call
     expect(mockFetch).toHaveBeenCalledOnce();
     const done = events.find((e) => e.type === "done");
     expect(done).toBeDefined();
-    // Must NOT be "toolUse" — that would stall the agent loop
-    expect(done?.type === "done" && done.reason).not.toBe("toolUse");
-    expect(done?.type === "done" && done.message.content.filter((b) => b.type === "toolCall")).toHaveLength(0);
+    expect(done?.type === "done" && done.reason).toBe("toolUse");
+    expect(done?.type === "done" && done.message.content.filter((b) => b.type === "toolCall")).toHaveLength(1);
 
-    warnSpy.mockRestore();
     vi.unstubAllGlobals();
   });
 

@@ -358,9 +358,8 @@ export function streamKiro(
               ),
             ]);
             if (result === FIRST_TOKEN_SENTINEL) {
-              try {
-                reader.cancel();
-              } catch {}
+              readPromise.catch(() => {}); // suppress dangling rejection
+              void reader.cancel().catch(() => {});
               firstTokenTimedOut = true;
               break;
             }
