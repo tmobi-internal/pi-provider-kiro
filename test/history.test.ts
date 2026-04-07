@@ -3,12 +3,13 @@ import {
   addPlaceholderTools,
   extractToolNamesFromHistory,
   HISTORY_LIMIT,
+  HISTORY_LIMIT_CONTEXT_WINDOW,
   injectSyntheticToolCalls,
   sanitizeHistory,
   stripHistoryImages,
   truncateHistory,
 } from "../src/history.js";
-import type { KiroHistoryEntry, KiroImage, KiroToolResult, KiroToolSpec, KiroToolUse } from "../src/transform.js";
+import type { KiroHistoryEntry, KiroToolResult, KiroToolSpec, KiroToolUse } from "../src/transform.js";
 
 const userEntry = (content: string, toolResults?: KiroToolResult[]): KiroHistoryEntry => ({
   userInputMessage: {
@@ -75,11 +76,7 @@ describe("Feature 6: History Management", () => {
     it("strips leading assistant entry and keeps subsequent valid entries", () => {
       // After truncation the first surviving entry may be an assistant message when
       // the paired user message was shifted out.
-      const h = [
-        assistantEntry("stale assistant"),
-        userEntry("new user message"),
-        assistantEntry("response"),
-      ];
+      const h = [assistantEntry("stale assistant"), userEntry("new user message"), assistantEntry("response")];
       const r = sanitizeHistory(h);
       expect(r.length).toBeGreaterThan(0);
       expect(r[0].userInputMessage).toBeDefined();
@@ -147,6 +144,28 @@ describe("Feature 6: History Management", () => {
       const r = truncateHistory(big, 50000);
       expect(JSON.stringify(r).length).toBeLessThanOrEqual(50000);
       if (r.length > 0) expect(r[0].userInputMessage).toBeDefined();
+    });
+
+    it("scaled limit for 1M context model retains history that fixed limit would truncate", () => {
+      // Build history that exceeds HISTORY_LIMIT (850K) but fits within a 1M-scaled limit
+      const entrySize = 10000;
+      const count = Math.ceil(HISTORY_LIMIT / entrySize) + 10; // just over 850K chars
+      const big = Array.from({ length: count }, (_, i) => [
+        userEntry(`msg-${i} ${"x".repeat(entrySize)}`),
+        assistantEntry(`reply-${i} ${"y".repeat(entrySize)}`),
+      ]).flat();
+      const serializedSize = JSON.stringify(big).length;
+      expect(serializedSize).toBeGreaterThan(HISTORY_LIMIT);
+
+      // Fixed limit truncates
+      const fixedResult = truncateHistory(big, HISTORY_LIMIT);
+      expect(fixedResult.length).toBeLessThan(big.length);
+
+      // Scaled limit for 1M context window retains everything
+      const scaledLimit = Math.floor((1_000_000 / HISTORY_LIMIT_CONTEXT_WINDOW) * HISTORY_LIMIT);
+      expect(scaledLimit).toBe(4_250_000);
+      const scaledResult = truncateHistory(big, scaledLimit);
+      expect(scaledResult.length).toBe(big.length);
     });
   });
 

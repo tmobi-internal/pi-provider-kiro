@@ -14,7 +14,8 @@
     "rules": {
       "recommended": true,
       "nursery": {
-        "recommended": true
+        "recommended": true,
+        "noNestedPromises": "off"
       }
     }
   },

@@ -3,6 +3,8 @@
 import type { KiroHistoryEntry, KiroToolSpec } from "./transform.js";
 
 export const HISTORY_LIMIT = 850000;
+/** The context window size (in tokens) that HISTORY_LIMIT was calibrated for. */
+export const HISTORY_LIMIT_CONTEXT_WINDOW = 200000;
 
 /** Remove images from history entries — they've already been processed by the
  *  model in previous turns and re-sending them wastes context / causes 413s. */
@@ -16,7 +18,10 @@ export function stripHistoryImages(history: KiroHistoryEntry[]): KiroHistoryEntr
 
 export function sanitizeHistory(history: KiroHistoryEntry[]): KiroHistoryEntry[] {
   // Strip leading entries that would make the history invalid
-  while (history.length > 0 && (!history[0]?.userInputMessage || history[0].userInputMessage.userInputMessageContext?.toolResults))
+  while (
+    history.length > 0 &&
+    (!history[0]?.userInputMessage || history[0].userInputMessage.userInputMessageContext?.toolResults)
+  )
     history = history.slice(1);
   const result: KiroHistoryEntry[] = [];
   for (let i = 0; i < history.length; i++) {
