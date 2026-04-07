@@ -8,7 +8,7 @@ import {
   stripHistoryImages,
   truncateHistory,
 } from "../src/history.js";
-import type { KiroHistoryEntry, KiroImage, KiroToolResult, KiroToolSpec, KiroToolUse } from "../src/transform.js";
+import type { KiroHistoryEntry, KiroToolResult, KiroToolSpec, KiroToolUse } from "../src/transform.js";
 
 const userEntry = (content: string, toolResults?: KiroToolResult[]): KiroHistoryEntry => ({
   userInputMessage: {
@@ -75,11 +75,7 @@ describe("Feature 6: History Management", () => {
     it("strips leading assistant entry and keeps subsequent valid entries", () => {
       // After truncation the first surviving entry may be an assistant message when
       // the paired user message was shifted out.
-      const h = [
-        assistantEntry("stale assistant"),
-        userEntry("new user message"),
-        assistantEntry("response"),
-      ];
+      const h = [assistantEntry("stale assistant"), userEntry("new user message"), assistantEntry("response")];
       const r = sanitizeHistory(h);
       expect(r.length).toBeGreaterThan(0);
       expect(r[0].userInputMessage).toBeDefined();

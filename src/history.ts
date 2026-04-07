@@ -16,7 +16,10 @@ export function stripHistoryImages(history: KiroHistoryEntry[]): KiroHistoryEntr
 
 export function sanitizeHistory(history: KiroHistoryEntry[]): KiroHistoryEntry[] {
   // Strip leading entries that would make the history invalid
-  while (history.length > 0 && (!history[0]?.userInputMessage || history[0].userInputMessage.userInputMessageContext?.toolResults))
+  while (
+    history.length > 0 &&
+    (!history[0]?.userInputMessage || history[0].userInputMessage.userInputMessageContext?.toolResults)
+  )
     history = history.slice(1);
   const result: KiroHistoryEntry[] = [];
   for (let i = 0; i < history.length; i++) {

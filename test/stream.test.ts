@@ -1184,14 +1184,12 @@ describe("Feature 9: Streaming Integration", () => {
     // reader.cancel() returns a rejected promise — simulates cancel on an
     // already-errored stream (common when abort fires mid-read).
     const cancelError = new Error("stream already errored");
-    let cancelCallCount = 0;
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       body: {
         getReader: () => ({
           read: () => new Promise(() => {}), // never resolves → timeout wins
           cancel: () => {
-            cancelCallCount++;
             return Promise.reject(cancelError);
           },
         }),
