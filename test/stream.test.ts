@@ -8,9 +8,9 @@ import type {
   TextContent,
   ToolResultMessage,
 } from "@mariozechner/pi-ai";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { retryConfig } from "../src/retry.js";
-import { streamKiro } from "../src/stream.js";
+import { resetProfileArnCache, streamKiro } from "../src/stream.js";
 
 const ts = Date.now();
 const zeroUsage = {
@@ -84,6 +84,11 @@ function mockFetchChunked(chunks: string[]) {
 }
 
 describe("Feature 9: Streaming Integration", () => {
+  beforeEach(() => {
+    // Mark profileArn as already resolved so tests don't see an extra fetch
+    resetProfileArnCache(true);
+  });
+
   it("emits error when no credentials provided", async () => {
     const stream = streamKiro(makeModel(), makeContext(), {});
     const events = await collect(stream);
@@ -122,6 +127,55 @@ describe("Feature 9: Streaming Integration", () => {
     // contextUsagePercentage=10 with contextWindow=200000 -> input should be 20000
     expect(msg?.usage.input).toBe(20000);
     expect(msg?.usage.totalTokens).toBeGreaterThan(20000);
+
+    vi.unstubAllGlobals();
+  });
+
+  it("resolves profileArn via ListAvailableProfiles and includes it in request body", async () => {
+    resetProfileArnCache(false);
+    const testArn = "arn:aws:codewhisperer:us-east-1:123:profile/TEST";
+    const mockFetch = vi
+      .fn()
+      // 1st call: ListAvailableProfiles
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ profiles: [{ arn: testArn }] }),
+      })
+      // 2nd call: generateAssistantResponse
+      .mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: vi
+              .fn()
+              .mockResolvedValueOnce({
+                done: false,
+                value: new TextEncoder().encode('{"content":"Hi"}{"contextUsagePercentage":5}'),
+              })
+              .mockResolvedValueOnce({ done: true, value: undefined }),
+          }),
+        },
+      });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
+    await collect(stream);
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    // First call is ListAvailableProfiles
+    expect(mockFetch.mock.calls[0][1].headers["X-Amz-Target"]).toBe("AmazonCodeWhispererService.ListAvailableProfiles");
+    // Second call includes profileArn in the body
+    const body = JSON.parse(mockFetch.mock.calls[1][1].body);
+    expect(body.profileArn).toBe(testArn);
+
+    // Subsequent call reuses cached ARN without another ListAvailableProfiles
+    const mockFetch2 = mockFetchOk('{"content":"Hi"}{"contextUsagePercentage":5}');
+    vi.stubGlobal("fetch", mockFetch2);
+    const stream2 = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
+    await collect(stream2);
+    expect(mockFetch2).toHaveBeenCalledOnce();
+    const body2 = JSON.parse(mockFetch2.mock.calls[0][1].body);
+    expect(body2.profileArn).toBe(testArn);
 
     vi.unstubAllGlobals();
   });
@@ -1331,14 +1385,28 @@ describe("Feature 9: Streaming Integration", () => {
   });
 
   it("refreshes token from kiro-cli on 403 before retrying", async () => {
+    // Start with unresolved cache so profileArn resolution runs
+    resetProfileArnCache(false);
     const mockFetch = vi
       .fn()
+      // 1st call: ListAvailableProfiles
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ profiles: [{ arn: "arn:aws:codewhisperer:us-east-1:123:profile/TEST" }] }),
+      })
+      // 2nd call: generateAssistantResponse → 403
       .mockResolvedValueOnce({
         ok: false,
         status: 403,
         statusText: "Forbidden",
         text: () => Promise.resolve('{"message":"The bearer token included in the request is invalid."}'),
       })
+      // 3rd call: ListAvailableProfiles (re-resolved after credential refresh)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ profiles: [{ arn: "arn:aws:codewhisperer:us-east-1:123:profile/TEST" }] }),
+      })
+      // 4th call: generateAssistantResponse retry
       .mockResolvedValueOnce({
         ok: true,
         body: {
@@ -1370,11 +1438,15 @@ describe("Feature 9: Streaming Integration", () => {
     const stream = streamKiro(makeModel(), makeContext(), { apiKey: "stale-token" });
     const events = await collect(stream);
 
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    // First call used the stale token
+    expect(mockFetch).toHaveBeenCalledTimes(4);
+    // 1st: ListAvailableProfiles with stale token
     expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe("Bearer stale-token");
-    // Second call used the fresh token from kiro-cli
-    expect(mockFetch.mock.calls[1][1].headers.Authorization).toBe("Bearer fresh-access-token");
+    // 2nd: generateAssistantResponse with stale token → 403
+    expect(mockFetch.mock.calls[1][1].headers.Authorization).toBe("Bearer stale-token");
+    // 3rd: ListAvailableProfiles re-resolved with fresh token
+    expect(mockFetch.mock.calls[2][1].headers.Authorization).toBe("Bearer fresh-access-token");
+    // 4th: generateAssistantResponse retry with fresh token
+    expect(mockFetch.mock.calls[3][1].headers.Authorization).toBe("Bearer fresh-access-token");
     expect(events.find((e) => e.type === "done")).toBeDefined();
 
     getCredsSpy.mockRestore();

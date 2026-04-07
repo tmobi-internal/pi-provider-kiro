@@ -63,11 +63,66 @@ interface KiroRequest {
     currentMessage: { userInputMessage: KiroUserInputMessage };
     history?: KiroHistoryEntry[];
   };
+  profileArn?: string;
 }
 interface KiroToolCallState {
   toolUseId: string;
   name: string;
   input: string;
+}
+
+// --- profileArn resolution (cached per endpoint) ---
+const profileArnCache = new Map<string, string>();
+const profileArnPending = new Set<string>();
+
+/** Reset profileArn cache — exported for tests. */
+export function resetProfileArnCache(resolved = false): void {
+  profileArnCache.clear();
+  profileArnPending.clear();
+  if (resolved) profileArnPending.add("__all__");
+}
+
+async function resolveProfileArn(accessToken: string, endpoint: string): Promise<string | undefined> {
+  if (profileArnPending.has("__all__")) return undefined;
+  if (profileArnCache.has(endpoint)) return profileArnCache.get(endpoint);
+  if (profileArnPending.has(endpoint)) return undefined;
+  try {
+    const ep = new URL(endpoint);
+    ep.pathname = ep.pathname.replace(/\/generateAssistantResponse\/?$/, "/");
+    ep.search = "";
+    ep.hash = "";
+
+    const r = await fetch(ep.toString(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-amz-json-1.0",
+        Authorization: `Bearer ${accessToken}`,
+        "X-Amz-Target": "AmazonCodeWhispererService.ListAvailableProfiles",
+      },
+      body: "{}",
+    });
+    if (!r.ok) {
+      console.warn(
+        `[pi-provider-kiro] Failed to resolve profileArn: ListAvailableProfiles returned ${r.status} ${r.statusText}. Will retry on the next request.`,
+      );
+      return undefined;
+    }
+    const j = (await r.json()) as { profiles?: Array<{ arn?: string }> };
+    const arn = j.profiles?.find((p) => p.arn)?.arn;
+    if (!arn) {
+      console.warn(
+        "[pi-provider-kiro] Failed to resolve profileArn: ListAvailableProfiles returned no profile ARN. Will retry on the next request.",
+      );
+      return undefined;
+    }
+    profileArnCache.set(endpoint, arn);
+    return arn;
+  } catch (error) {
+    console.warn(
+      `[pi-provider-kiro] Failed to resolve profileArn: ${error instanceof Error ? error.message : String(error)}. Will retry on the next request.`,
+    );
+    return undefined;
+  }
 }
 
 function emitToolCall(
@@ -129,6 +184,8 @@ export function streamKiro(
       let accessToken = options?.apiKey;
       if (!accessToken) throw new Error("Kiro credentials not set. Run /login kiro or install kiro-cli.");
       const endpoint = model.baseUrl || "https://q.us-east-1.amazonaws.com/generateAssistantResponse";
+
+      let profileArn = await resolveProfileArn(accessToken, endpoint);
       const kiroModelId = resolveKiroModel(model.id);
       const thinkingEnabled = !!options?.reasoning || model.reasoning;
       let systemPrompt = context.systemPrompt ?? "";
@@ -273,6 +330,7 @@ export function streamKiro(
             },
             ...(history.length > 0 ? { history } : {}),
           },
+          ...(profileArn ? { profileArn } : {}),
         };
         const mid = crypto.randomUUID().replace(/-/g, "");
         const ua = `aws-sdk-js/1.0.0 ua/2.1 os/nodejs lang/js api/codewhispererruntime#1.0.0 m/E KiroIDE-0.75.0-${mid}`;
@@ -304,6 +362,10 @@ export function streamKiro(
             // one may have been rotated by kiro-cli or another session.
             const freshCreds = getKiroCliCredentials();
             if (freshCreds?.access) accessToken = freshCreds.access;
+
+            // Re-resolve profileArn with fresh credentials
+            profileArnCache.delete(endpoint);
+            profileArn = await resolveProfileArn(accessToken, endpoint);
             const delayMs = exponentialBackoff(retryCount - 1, 500, MAX_RETRY_DELAY);
             await abortableDelay(delayMs, options?.signal);
             continue;
