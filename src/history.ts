@@ -3,6 +3,8 @@
 import type { KiroHistoryEntry, KiroToolSpec } from "./transform.js";
 
 export const HISTORY_LIMIT = 850000;
+/** The context window size (in tokens) that HISTORY_LIMIT was calibrated for. */
+export const HISTORY_LIMIT_CONTEXT_WINDOW = 200000;
 
 /** Remove images from history entries — they've already been processed by the
  *  model in previous turns and re-sending them wastes context / causes 413s. */
