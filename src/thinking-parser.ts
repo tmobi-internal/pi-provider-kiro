@@ -135,6 +135,7 @@ export class ThinkingTagParser {
       this.textBuffer = this.textBuffer.slice(endPos + this.activeEndTag.length);
       this.inThinking = false;
       this.thinkingExtracted = true;
+      this.textBlockIndex = null;
       if (this.textBuffer.startsWith("\n\n")) this.textBuffer = this.textBuffer.slice(2);
       return;
     }
