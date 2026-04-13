@@ -36,6 +36,7 @@ export class ThinkingTagParser {
   private thinkingExtracted = false;
   private thinkingBlockIndex: number | null = null;
   private textBlockIndex: number | null = null;
+  private lastTextBlockIndex: number | null = null;
   private activeEndTag: string = THINKING_END_TAG;
 
   constructor(
@@ -87,7 +88,7 @@ export class ThinkingTagParser {
   }
 
   getTextBlockIndex(): number | null {
-    return this.textBlockIndex;
+    return this.textBlockIndex ?? this.lastTextBlockIndex;
   }
 
   private processBeforeThinking(): void {
@@ -135,6 +136,8 @@ export class ThinkingTagParser {
       this.textBuffer = this.textBuffer.slice(endPos + this.activeEndTag.length);
       this.inThinking = false;
       this.thinkingExtracted = true;
+      this.lastTextBlockIndex = this.textBlockIndex;
+      this.textBlockIndex = null;
       if (this.textBuffer.startsWith("\n\n")) this.textBuffer = this.textBuffer.slice(2);
       return;
     }
@@ -167,8 +170,17 @@ export class ThinkingTagParser {
   private emitThinking(thinking: string): void {
     if (!thinking) return;
     if (this.thinkingBlockIndex === null) {
-      this.thinkingBlockIndex = this.output.content.length;
-      this.output.content.push({ type: "thinking", thinking: "" });
+      if (this.textBlockIndex !== null) {
+        // Thinking arrived after text was already emitted (Kiro API sends
+        // text before thinking content). Insert the thinking block before
+        // the text block so the content array order is thinking → text.
+        this.thinkingBlockIndex = this.textBlockIndex;
+        this.output.content.splice(this.thinkingBlockIndex, 0, { type: "thinking", thinking: "" });
+        this.textBlockIndex = this.textBlockIndex + 1;
+      } else {
+        this.thinkingBlockIndex = this.output.content.length;
+        this.output.content.push({ type: "thinking", thinking: "" });
+      }
       this.stream.push({ type: "thinking_start", contentIndex: this.thinkingBlockIndex, partial: this.output });
     }
     const block = this.output.content[this.thinkingBlockIndex] as ThinkingContent;

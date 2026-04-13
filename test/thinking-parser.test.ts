@@ -82,8 +82,10 @@ describe("Feature 7: Thinking Tag Parser", () => {
     parser.processChunk("king>deep thought</thinking>");
     parser.finalize();
 
-    expect(output.content[0]?.type === "text" && output.content[0].text).toBe("Hello ");
-    expect(output.content[1]?.type === "thinking" && output.content[1].thinking).toBe("deep thought");
+    // Thinking block inserted before text block
+    expect(output.content[0]?.type).toBe("thinking");
+    expect(output.content[0]?.type === "thinking" && output.content[0].thinking).toBe("deep thought");
+    expect(output.content[1]?.type === "text" && output.content[1].text).toBe("Hello ");
   });
 
   it("detects thinking start tag split across chunks", async () => {
@@ -174,5 +176,57 @@ describe("Feature 7: Thinking Tag Parser", () => {
     const events = await run(["<think>idea</th", "ink>\n\nText"]);
     expect(events.map((e) => e.type)).toContain("thinking_end");
     expect(deltas(events, "text_delta")).toContain("Text");
+  });
+
+  // =========================================================================
+  // Text-before-thinking (Kiro API sends text first, thinking after)
+  // =========================================================================
+
+  it("reorders thinking before text when text arrives first", async () => {
+    const output = makeOutput();
+    const stream = createAssistantMessageEventStream();
+    const parser = new ThinkingTagParser(output, stream);
+
+    // Simulate Kiro API: text content arrives before thinking
+    parser.processChunk("Hello world");
+    parser.processChunk("<thinking>reasoning</thinking>");
+    parser.finalize();
+    stream.end();
+
+    // Thinking block should be at index 0, text at index 1
+    expect(output.content[0]?.type).toBe("thinking");
+    expect(output.content[1]?.type).toBe("text");
+    expect((output.content[0] as { thinking: string }).thinking).toBe("reasoning");
+    expect((output.content[1] as { text: string }).text).toBe("Hello world");
+  });
+
+  it("getTextBlockIndex accounts for reordering when text arrives first", () => {
+    const output = makeOutput();
+    const stream = createAssistantMessageEventStream();
+    const parser = new ThinkingTagParser(output, stream);
+
+    parser.processChunk("Hello");
+    parser.processChunk("<thinking>t</thinking>");
+    parser.finalize();
+
+    // textBlockIndex should be 1 (shifted by thinking insertion)
+    expect(parser.getTextBlockIndex()).toBe(1);
+  });
+
+  it("handles text-before-thinking across multiple chunks", async () => {
+    const output = makeOutput();
+    const stream = createAssistantMessageEventStream();
+    const parser = new ThinkingTagParser(output, stream);
+
+    parser.processChunk("Hey! ");
+    parser.processChunk("What can I help with?");
+    parser.processChunk("<thinking>Let me think about this</thinking>");
+    parser.finalize();
+    stream.end();
+
+    expect(output.content[0]?.type).toBe("thinking");
+    expect(output.content[1]?.type).toBe("text");
+    expect((output.content[0] as { thinking: string }).thinking).toBe("Let me think about this");
+    expect((output.content[1] as { text: string }).text).toBe("Hey! What can I help with?");
   });
 });
