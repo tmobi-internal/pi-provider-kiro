@@ -9,7 +9,7 @@ import type {
   ToolResultMessage,
 } from "@mariozechner/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { retryConfig } from "../src/retry.js";
+import { capacityRetryConfig, retryConfig } from "../src/retry.js";
 import { resetProfileArnCache, streamKiro } from "../src/stream.js";
 
 const ts = Date.now();
@@ -772,8 +772,11 @@ describe("Feature 9: Streaming Integration", () => {
     vi.unstubAllGlobals();
   });
 
-  it("omits 429 from INSUFFICIENT_MODEL_CAPACITY errors to avoid outer auto-retry", async () => {
-    const mockFetch = vi.fn().mockResolvedValueOnce({
+  it("retries INSUFFICIENT_MODEL_CAPACITY with backoff then throws after max retries", async () => {
+    const origConfig = { ...capacityRetryConfig };
+    capacityRetryConfig.baseDelayMs = 10;
+
+    const mockFetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 429,
       statusText: "Too Many Requests",
@@ -781,16 +784,87 @@ describe("Feature 9: Streaming Integration", () => {
     });
     vi.stubGlobal("fetch", mockFetch);
 
-    const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
-    const events = await collect(stream);
+    try {
+      const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
+      const events = await collect(stream);
 
-    expect(mockFetch).toHaveBeenCalledOnce();
-    const error = events.find((e) => e.type === "error");
-    expect(error).toBeDefined();
-    expect(error?.type === "error" && error.error.errorMessage).toContain("INSUFFICIENT_MODEL_CAPACITY");
-    expect(error?.type === "error" && error.error.errorMessage).not.toContain("429");
+      // 1 initial + 3 capacity retries
+      expect(mockFetch).toHaveBeenCalledTimes(4);
+      const error = events.find((e) => e.type === "error");
+      expect(error).toBeDefined();
+      expect(error?.type === "error" && error.error.errorMessage).toContain("INSUFFICIENT_MODEL_CAPACITY");
+      expect(error?.type === "error" && error.error.errorMessage).not.toContain("429");
+    } finally {
+      Object.assign(capacityRetryConfig, origConfig);
+      vi.unstubAllGlobals();
+    }
+  });
 
-    vi.unstubAllGlobals();
+  it("succeeds after transient capacity error without consuming outer retry budget", async () => {
+    const origConfig = { ...capacityRetryConfig };
+    capacityRetryConfig.baseDelayMs = 10;
+
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        text: () => Promise.resolve("INSUFFICIENT_MODEL_CAPACITY"),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: vi
+              .fn()
+              .mockResolvedValueOnce({
+                done: false,
+                value: new TextEncoder().encode('{"content":"ok"}{"contextUsagePercentage":5}'),
+              })
+              .mockResolvedValueOnce({ done: true, value: undefined }),
+          }),
+        },
+      });
+    vi.stubGlobal("fetch", mockFetch);
+
+    try {
+      const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
+      const events = await collect(stream);
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(events.find((e) => e.type === "done")).toBeDefined();
+    } finally {
+      Object.assign(capacityRetryConfig, origConfig);
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("aborts promptly during capacity retry backoff delay", async () => {
+    const origConfig = { ...capacityRetryConfig };
+    capacityRetryConfig.baseDelayMs = 5000; // long delay so abort fires first
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      statusText: "Too Many Requests",
+      text: () => Promise.resolve("INSUFFICIENT_MODEL_CAPACITY"),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    try {
+      const abortController = new AbortController();
+      const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok", signal: abortController.signal });
+      setTimeout(() => abortController.abort(), 50);
+      const events = await collect(stream);
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const error = events.find((e) => e.type === "error");
+      expect(error).toBeDefined();
+    } finally {
+      Object.assign(capacityRetryConfig, origConfig);
+      vi.unstubAllGlobals();
+    }
   });
 
   it("omits status codes from MONTHLY_REQUEST_COUNT errors to avoid outer auto-retry", async () => {
