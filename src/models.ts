@@ -2,6 +2,7 @@
 
 // Valid Kiro model IDs - API accepts friendly names directly
 export const KIRO_MODEL_IDS = new Set([
+  "claude-opus-4.7",
   "claude-opus-4.6",
   "claude-opus-4.6-1m",
   "claude-sonnet-4.6",
@@ -69,6 +70,7 @@ export function resolveApiRegion(ssoRegion: string | undefined): string {
  */
 const MODELS_BY_REGION: Record<string, Set<string>> = {
   "us-east-1": new Set([
+    "claude-opus-4-7",
     "claude-opus-4-6",
     "claude-opus-4-6-1m",
     "claude-sonnet-4-6",
@@ -91,6 +93,7 @@ const MODELS_BY_REGION: Record<string, Set<string>> = {
   ]),
   // API-verified 2026-04-14 (eu-west-1 IdC token)
   "eu-central-1": new Set([
+    "claude-opus-4-7",
     "claude-opus-4-6",
     "claude-sonnet-4-6",
     "claude-opus-4-5",
@@ -121,6 +124,20 @@ const BASE_URL = "https://q.us-east-1.amazonaws.com/generateAssistantResponse";
 const ZERO_COST = Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
 
 export const kiroModels = [
+  // Claude Opus 4.7
+  {
+    id: "claude-opus-4-7",
+    name: "Claude Opus 4.7",
+    api: "kiro-api" as const,
+    provider: "kiro" as const,
+    baseUrl: BASE_URL,
+    reasoning: true,
+    input: ["text", "image"] as ("text" | "image")[],
+    cost: ZERO_COST,
+    contextWindow: 1000000,
+    maxTokens: 128000,
+    firstTokenTimeout: 180_000,
+  },
   // Claude Opus 4.6
   {
     id: "claude-opus-4-6",

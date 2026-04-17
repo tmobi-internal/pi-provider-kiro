@@ -25,6 +25,7 @@ import { resolveKiroModel } from "./models.js";
 import {
   capacityRetryConfig,
   exponentialBackoff,
+  firstTokenTimeoutForModel,
   isCapacityError,
   isNonRetryableBodyError,
   isTooBigError,
@@ -491,7 +492,7 @@ export function streamKiro(
             const result = await Promise.race([
               readPromise,
               new Promise<typeof FIRST_TOKEN_SENTINEL>((resolve) =>
-                setTimeout(() => resolve(FIRST_TOKEN_SENTINEL), retryConfig.firstTokenTimeoutMs),
+                setTimeout(() => resolve(FIRST_TOKEN_SENTINEL), firstTokenTimeoutForModel(model.id)),
               ),
             ]);
             if (result === FIRST_TOKEN_SENTINEL) {
