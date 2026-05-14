@@ -45,6 +45,7 @@ const IDC_PROBE_REGIONS = [
   "eu-north-1", // SSO region → eu-central-1 API
   "ap-southeast-1",
   "ap-northeast-1",
+  "ap-northeast-2", // Seoul
   "us-west-2",
 ];
 
