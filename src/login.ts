@@ -72,9 +72,14 @@ export async function interactiveLogin(callbacks: OAuthLoginCallbacks): Promise<
 
   if (choice) {
     switch (choice.method) {
+      case "kiro-cli":
+        return loginViaKiroCli(callbacks, "google");
       case "builder-id":
         return runDeviceCodeFlow(callbacks, BUILDER_ID_START_URL, "us-east-1");
       case "idc":
+        if (choice.region) {
+          return runDeviceCodeFlow(callbacks, choice.startUrl, choice.region);
+        }
         return runDeviceCodeFlowWithRegionDetection(callbacks, choice.startUrl);
       case "google":
         return loginViaKiroCli(callbacks, "google");
