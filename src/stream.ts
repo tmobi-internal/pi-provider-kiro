@@ -448,6 +448,9 @@ export function streamKiro(
               // one may have been rotated by kiro-cli or another session. If
               // the cached kiro-cli token is also stale, actively refresh it.
               const freshCreds = getKiroCliCredentials() ?? refreshViaKiroCli();
+              if (!freshCreds?.access && retryCount >= maxRetries) {
+                throw new Error("Kiro authentication expired. Run /login kiro to re-authenticate.");
+              }
               if (freshCreds?.access) accessToken = freshCreds.access;
 
               // Re-resolve profileArn with fresh credentials
