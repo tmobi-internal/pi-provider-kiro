@@ -9,6 +9,7 @@ vi.mock("../src/kiro-cli.js", () => ({
   getKiroCliSocialToken: vi.fn(() => undefined),
   getKiroCliSocialTokenAllowExpired: vi.fn(() => undefined),
   saveKiroCliCredentials: vi.fn(),
+  refreshViaKiroCli: vi.fn(() => undefined),
 }));
 
 describe("Feature 3: OAuth — Token Refresh", () => {
@@ -76,7 +77,7 @@ describe("Feature 3: OAuth — Token Refresh", () => {
           expires: 0,
           region: "us-east-1",
         } as KiroCredentials),
-      ).rejects.toThrow("Desktop token refresh failed: 401");
+      ).rejects.toThrow("/login kiro");
       vi.unstubAllGlobals();
     });
 
@@ -92,7 +93,7 @@ describe("Feature 3: OAuth — Token Refresh", () => {
           expires: 0,
           region: "us-east-1",
         } as KiroCredentials),
-      ).rejects.toThrow("Desktop token refresh: missing accessToken");
+      ).rejects.toThrow("/login kiro");
       vi.unstubAllGlobals();
     });
 

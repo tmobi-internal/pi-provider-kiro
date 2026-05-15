@@ -167,14 +167,20 @@ export async function refreshKiroToken(credentials: OAuthCredentials): Promise<O
       }
     }
 
-    // Layer 5: Graceful degradation — our expires has a 5-min buffer, so the
+    // Layer 5: Delegate to kiro-cli's own refresh command.
+    // kiro-cli may have internal token rotation logic we don't replicate.
+    const { refreshViaKiroCli } = await import("./kiro-cli.js");
+    const kiroCliRefreshed = refreshViaKiroCli();
+    if (kiroCliRefreshed) return kiroCliRefreshed;
+
+    // Layer 6: Graceful degradation — our expires has a 5-min buffer, so the
     // actual AWS token may still be valid. Return it to buy time.
     const actualExpiry = credentials.expires + EXPIRES_BUFFER_MS;
     if (credentials.access && Date.now() < actualExpiry) {
       return { ...credentials, expires: actualExpiry };
     }
 
-    throw refreshError;
+    throw new Error("Kiro token refresh failed. Run /login kiro to re-authenticate.");
   }
 }
 
