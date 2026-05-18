@@ -21,7 +21,7 @@ import { parseBracketToolCalls } from "./bracket-tool-parser.js";
 import { debugEnabled, debugLog } from "./debug.js";
 import { parseKiroEvents } from "./event-parser.js";
 import { addPlaceholderTools, HISTORY_LIMIT, HISTORY_LIMIT_CONTEXT_WINDOW, truncateHistory } from "./history.js";
-import { getKiroCliCredentials, refreshViaKiroCli } from "./kiro-cli.js";
+import { getKiroCliCredentials } from "./kiro-cli.js";
 import { resolveKiroModel } from "./models.js";
 import {
   capacityRetryConfig,
@@ -444,14 +444,12 @@ export function streamKiro(
             }
             if (response.status === 403 && !isCapacityError(errText) && retryCount < maxRetries) {
               retryCount++;
-              // On 403, try to get a fresh token before retrying — the current
-              // one may have been rotated by kiro-cli or another session. If
-              // the cached kiro-cli token is also stale, actively refresh it.
-              const freshCreds = getKiroCliCredentials() ?? refreshViaKiroCli();
-              if (!freshCreds?.access && retryCount >= maxRetries) {
+              // On 403, check if kiro-cli has a fresher token (rotated by another session).
+              const freshCreds = getKiroCliCredentials();
+              if (!freshCreds?.access) {
                 throw new Error("Kiro authentication expired. Run /login kiro to re-authenticate.");
               }
-              if (freshCreds?.access) accessToken = freshCreds.access;
+              accessToken = freshCreds.access;
 
               // Re-resolve profileArn with fresh credentials
               profileArnCache.delete(endpoint);
