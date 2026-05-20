@@ -9,6 +9,7 @@ vi.mock("../src/kiro-ide.js", () => ({
 vi.mock("../src/kiro-cli.js", () => ({
   getKiroCliCredentials: vi.fn(() => undefined),
   getKiroCliSocialToken: vi.fn(() => undefined),
+  refreshViaKiroCli: vi.fn(() => undefined),
 }));
 
 describe("Feature 3: OAuth — Token Refresh", () => {
@@ -67,7 +68,7 @@ describe("Feature 3: OAuth — Token Refresh", () => {
     it("throws when no valid credentials found", async () => {
       await expect(
         refreshKiroToken({ refresh: "old", access: "old", expires: 0 }),
-      ).rejects.toThrow("/login kiro");
+      ).rejects.toThrow("/login-kiro");
     });
   });
 });
