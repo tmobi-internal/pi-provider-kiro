@@ -2,6 +2,7 @@
 // ABOUTME: Handles request building, retry logic, event parsing, and token counting.
 
 import { appendFile, mkdir } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -216,7 +217,7 @@ export function streamKiro(
     };
     try {
       let accessToken = options?.apiKey;
-      if (!accessToken) throw new Error("Kiro credentials not set. Run /login kiro or install kiro-cli.");
+      if (!accessToken) throw new Error("Kiro session expired. Please run: /login-kiro");
       const endpoint = model.baseUrl || "https://q.us-east-1.amazonaws.com/generateAssistantResponse";
 
       let profileArn = await resolveProfileArn(accessToken, endpoint);
@@ -449,9 +450,10 @@ export function streamKiro(
               // the cached kiro-cli token is also stale, actively refresh it.
               const freshCreds = getKiroCliCredentials() ?? refreshViaKiroCli();
               if (!freshCreds?.access) {
-                throw new Error("Kiro authentication expired. Run /login kiro to re-authenticate.");
+                throw new Error("Kiro session expired. Please run: /login-kiro");
               }
               accessToken = freshCreds.access;
+              console.warn("[pi-provider-kiro] Token refreshed via kiro-cli");
 
               // Re-resolve profileArn with fresh credentials
               profileArnCache.delete(endpoint);

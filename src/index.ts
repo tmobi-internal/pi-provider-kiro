@@ -44,4 +44,19 @@ export default function (pi: ExtensionAPI) {
     } as any,
     streamSimple: streamKiro,
   });
+
+  pi.registerCommand("login-kiro", {
+    description: "Re-login to Kiro (opens browser)",
+    handler: async (_args, ctx) => {
+      const { stdout, stderr, code } = await pi.exec("kiro-cli", ["login", "--license", "free"], { timeout: 120_000 });
+      const output = `${stdout}\n${stderr}`;
+      if (output.includes("Already logged in")) {
+        ctx.ui.notify("Already logged in — token refreshed.");
+      } else if (code === 0) {
+        ctx.ui.notify(stdout || "Login successful");
+      } else {
+        ctx.ui.notify(stderr || stdout || `Login failed (exit ${code})`);
+      }
+    },
+  });
 }

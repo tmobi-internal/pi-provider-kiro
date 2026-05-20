@@ -92,7 +92,7 @@ export async function loginKiroBuilderID(callbacks: OAuthLoginCallbacks): Promis
  * If no valid token is found, throws to trigger re-login via pi framework.
  */
 export async function refreshKiroToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
-  const { getKiroCliCredentials, getKiroCliSocialToken } = await import("./kiro-cli.js");
+  const { getKiroCliCredentials, getKiroCliSocialToken, refreshViaKiroCli } = await import("./kiro-cli.js");
 
   // 1. Kiro IDE token — freshest source
   const ideCreds = getKiroIdeCredentials();
@@ -102,6 +102,13 @@ export async function refreshKiroToken(credentials: OAuthCredentials): Promise<O
   const cliCreds = getKiroCliSocialToken() ?? getKiroCliCredentials();
   if (cliCreds) return cliCreds;
 
-  // 3. No valid token available — throw to trigger re-login
-  throw new Error("Kiro token expired. Run /login kiro to re-authenticate via kiro-cli.");
+  // 3. Force refresh via kiro-cli
+  const refreshed = refreshViaKiroCli();
+  if (refreshed) {
+    console.warn("[pi-provider-kiro] Token refreshed via kiro-cli");
+    return refreshed;
+  }
+
+  // 4. No valid token available — throw to trigger re-login
+  throw new Error("Kiro session expired. Please run: /login-kiro");
 }
