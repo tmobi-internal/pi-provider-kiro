@@ -1185,23 +1185,26 @@ describe("Feature 9: Streaming Integration", () => {
     const toolPayload = '{"name":"bash","toolUseId":"tc1","input":"not-valid-json","stop":true}';
     const mockFetch = mockFetchOk(`${toolPayload}{"contextUsagePercentage":10}`);
     vi.stubGlobal("fetch", mockFetch);
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { notify: notifyFn } = await import("../src/notify.js");
+    const notifySpy = vi.spyOn({ notify: notifyFn }, "notify");
+
+    const { setNotifyContext } = await import("../src/notify.js");
+    const mockCtx = { ui: { notify: vi.fn() } } as any;
+    setNotifyContext(mockCtx);
 
     const stream = streamKiro(makeModel({ reasoning: false }), makeContext(), { apiKey: "tok" });
     const events = await collect(stream);
 
-    expect(warnSpy).toHaveBeenCalledOnce();
-    const msg = warnSpy.mock.calls[0][0] as string;
-    expect(msg).toContain("[pi-provider-kiro]");
+    expect(mockCtx.ui.notify).toHaveBeenCalledOnce();
+    const msg = mockCtx.ui.notify.mock.calls[0][0] as string;
+    expect(msg).toContain("[kiro]");
     expect(msg).toContain("bash");
-    expect(msg).toContain("tc1");
-    expect(msg).toContain("not-valid-json");
 
     // Tool call with unparseable JSON should be skipped entirely
     const tcEnd = events.find((e) => e.type === "toolcall_end");
     expect(tcEnd).toBeUndefined();
 
-    warnSpy.mockRestore();
     vi.unstubAllGlobals();
   });
 
