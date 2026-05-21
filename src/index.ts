@@ -6,6 +6,7 @@ import type { Api, Model, OAuthCredentials } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { getKiroCliCredentials } from "./kiro-cli.js";
 import { setExtensionContext } from "./login-ui.js";
+import { setNotifyContext } from "./notify.js";
 import { filterModelsByRegion, kiroModels, resolveApiRegion } from "./models.js";
 import type { KiroCredentials } from "./oauth.js";
 import { loginKiro, refreshKiroToken } from "./oauth.js";
@@ -16,6 +17,7 @@ export default function (pi: ExtensionAPI) {
   // Capture ctx for the custom TUI login component
   pi.on("session_start", async (_event, ctx) => {
     setExtensionContext(ctx);
+    setNotifyContext(ctx);
   });
   pi.registerProvider("kiro", {
     baseUrl: "https://q.us-east-1.amazonaws.com/generateAssistantResponse",

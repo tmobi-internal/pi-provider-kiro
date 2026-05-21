@@ -10,6 +10,7 @@
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@mariozechner/pi-ai";
 import { getKiroIdeCredentials } from "./kiro-ide.js";
 import { interactiveLogin, loginViaKiroCli } from "./login.js";
+import { notify } from "./notify.js";
 
 export const SSO_OIDC_ENDPOINT = "https://oidc.us-east-1.amazonaws.com";
 export const BUILDER_ID_START_URL = "https://view.awsapps.com/start";
@@ -105,7 +106,7 @@ export async function refreshKiroToken(credentials: OAuthCredentials): Promise<O
   // 3. Force refresh via kiro-cli
   const refreshed = refreshViaKiroCli();
   if (refreshed) {
-    console.warn("[pi-provider-kiro] Token refreshed via kiro-cli");
+    notify("[kiro] Token refreshed via kiro-cli");
     return refreshed;
   }
 

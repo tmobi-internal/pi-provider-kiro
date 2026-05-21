@@ -9,6 +9,7 @@
 import { DynamicBorder, type ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Container, Input, type SelectItem, SelectList, Text } from "@mariozechner/pi-tui";
 
+
 export type LoginChoice =
   | { method: "builder-id" }
   | { method: "idc"; startUrl: string; region?: string }

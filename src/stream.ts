@@ -23,6 +23,7 @@ import { debugEnabled, debugLog } from "./debug.js";
 import { parseKiroEvents } from "./event-parser.js";
 import { addPlaceholderTools, HISTORY_LIMIT, HISTORY_LIMIT_CONTEXT_WINDOW, truncateHistory } from "./history.js";
 import { getKiroCliCredentials, refreshViaKiroCli } from "./kiro-cli.js";
+import { notify } from "./notify.js";
 import { resolveKiroModel } from "./models.js";
 import {
   capacityRetryConfig,
@@ -137,25 +138,19 @@ async function resolveProfileArn(accessToken: string, endpoint: string): Promise
       body: "{}",
     });
     if (!r.ok) {
-      console.warn(
-        `[pi-provider-kiro] Failed to resolve profileArn: ListAvailableProfiles returned ${r.status} ${r.statusText}. Will retry on the next request.`,
-      );
+      notify(`[kiro] Failed to resolve profileArn: ${r.status} ${r.statusText}`, "warning");
       return undefined;
     }
     const j = (await r.json()) as { profiles?: Array<{ arn?: string }> };
     const arn = j.profiles?.find((p) => p.arn)?.arn;
     if (!arn) {
-      console.warn(
-        "[pi-provider-kiro] Failed to resolve profileArn: ListAvailableProfiles returned no profile ARN. Will retry on the next request.",
-      );
+      notify("[kiro] Failed to resolve profileArn: no profile ARN returned", "warning");
       return undefined;
     }
     profileArnCache.set(endpoint, arn);
     return arn;
   } catch (error) {
-    console.warn(
-      `[pi-provider-kiro] Failed to resolve profileArn: ${error instanceof Error ? error.message : String(error)}. Will retry on the next request.`,
-    );
+    notify(`[kiro] Failed to resolve profileArn: ${error instanceof Error ? error.message : String(error)}`, "warning");
     return undefined;
   }
 }
@@ -176,9 +171,7 @@ function emitToolCall(
   try {
     args = JSON.parse(state.input) as Record<string, unknown>;
   } catch (e) {
-    console.warn(
-      `[pi-provider-kiro] Failed to parse tool input for "${state.name}" (toolUseId: ${state.toolUseId}): ${e instanceof Error ? e.message : String(e)}. Raw input (${state.input.length} chars): ${state.input.substring(0, 200)}`,
-    );
+    notify(`[kiro] Failed to parse tool input for "${state.name}"`, "warning");
     return false;
   }
 
@@ -433,7 +426,7 @@ export function streamKiro(
               capacityRetryCount++;
               const delayMs = exponentialBackoff(capacityRetryCount - 1, capacityRetryConfig.baseDelayMs, 30_000);
               const msg = `INSUFFICIENT_MODEL_CAPACITY — retrying in ${delayMs}ms (${capacityRetryCount}/${capacityRetryConfig.maxRetries})`;
-              console.error(`[pi-provider-kiro] ${msg}`);
+              notify(`[kiro] ${msg}`, "error");
               logCapacityEvent(msg);
               await abortableDelay(delayMs, options?.signal);
               continue;
@@ -453,7 +446,7 @@ export function streamKiro(
                 throw new Error("Kiro session expired. Please run: /login-kiro");
               }
               accessToken = freshCreds.access;
-              console.warn("[pi-provider-kiro] Token refreshed via kiro-cli");
+              notify("[kiro] Token refreshed via kiro-cli");
 
               // Re-resolve profileArn with fresh credentials
               profileArnCache.delete(endpoint);
@@ -718,9 +711,7 @@ export function streamKiro(
           if (retryCount < maxRetries) {
             retryCount++;
             const delayMs = exponentialBackoff(retryCount - 1, 1000, MAX_RETRY_DELAY);
-            console.warn(
-              `[pi-provider-kiro] ${isEchoLoop ? 'Echo loop detected (model responded with just "Continue")' : "Empty response (no text, no tool calls)"} — retrying (${retryCount}/${maxRetries})`,
-            );
+            notify(`[kiro] ${isEchoLoop ? "Echo loop detected" : "Empty response"} — retrying (${retryCount}/${maxRetries})`, "warning");
             // Reset output content for the retry
             output.content = [];
             textBlockIndex = null;
@@ -731,13 +722,9 @@ export function streamKiro(
             // After max retries, strip the echo text to prevent the agent
             // loop from interpreting "Continue" as a continuation signal.
             (output.content[textBlockIndex!] as TextContent).text = "";
-            console.warn(
-              `[pi-provider-kiro] Echo loop persisted after ${maxRetries} retries — stripping "Continue" response`,
-            );
+            notify(`[kiro] Echo loop persisted after ${maxRetries} retries — stripping response`, "warning");
           } else {
-            console.warn(
-              `[pi-provider-kiro] Empty response after ${maxRetries} retries — returning stopReason:"stop" to avoid agent loop stall`,
-            );
+            notify(`[kiro] Empty response after ${maxRetries} retries`, "warning");
           }
         }
         // Use emittedToolCalls (not toolCalls.length) to avoid stopReason:"toolUse"
