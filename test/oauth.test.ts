@@ -68,7 +68,7 @@ describe("Feature 3: OAuth — Token Refresh", () => {
     it("throws when no valid credentials found", async () => {
       await expect(
         refreshKiroToken({ refresh: "old", access: "old", expires: 0 }),
-      ).rejects.toThrow("/login-kiro");
+      ).rejects.toThrow("/login");
     });
   });
 });

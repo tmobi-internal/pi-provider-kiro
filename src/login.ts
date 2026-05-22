@@ -266,6 +266,7 @@ export async function loginViaKiroCli(
     execFileSync("kiro-cli", ["login", "--license", "free"], {
       timeout: 120000,
       stdio: "inherit",
+      env: { ...process.env, CI: "true" },
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);

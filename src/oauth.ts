@@ -111,5 +111,5 @@ export async function refreshKiroToken(credentials: OAuthCredentials): Promise<O
   }
 
   // 4. No valid token available — throw to trigger re-login
-  throw new Error("Kiro session expired. Please run: /login-kiro");
+  throw new Error("Kiro session expired. Please run: /login → Use a subscription → Kiro (works even if already configured)");
 }
