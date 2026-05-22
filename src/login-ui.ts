@@ -20,7 +20,7 @@ export type LoginChoice =
 
 let _ctx: ExtensionContext | undefined;
 
-export function setExtensionContext(ctx: ExtensionContext) {
+export function setExtensionContext(ctx: ExtensionContext | undefined) {
   _ctx = ctx;
 }
 
