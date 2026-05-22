@@ -19,6 +19,16 @@ export default function (pi: ExtensionAPI) {
     setExtensionContext(ctx);
     setNotifyContext(ctx);
   });
+
+  pi.on("session_before_switch", async () => {
+    setExtensionContext(undefined);
+    setNotifyContext(undefined);
+  });
+
+  pi.on("session_shutdown", async () => {
+    setExtensionContext(undefined);
+    setNotifyContext(undefined);
+  });
   pi.registerProvider("kiro", {
     baseUrl: "https://q.us-east-1.amazonaws.com/generateAssistantResponse",
     api: "kiro-api",
