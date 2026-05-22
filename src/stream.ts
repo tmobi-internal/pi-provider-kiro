@@ -210,7 +210,7 @@ export function streamKiro(
     };
     try {
       let accessToken = options?.apiKey;
-      if (!accessToken) throw new Error("Kiro session expired. Please run: /login-kiro");
+      if (!accessToken) throw new Error("Kiro session expired. Please run: /login → Use a subscription → Kiro (works even if already configured)");
       const endpoint = model.baseUrl || "https://q.us-east-1.amazonaws.com/generateAssistantResponse";
 
       let profileArn = await resolveProfileArn(accessToken, endpoint);
@@ -443,7 +443,7 @@ export function streamKiro(
               // the cached kiro-cli token is also stale, actively refresh it.
               const freshCreds = getKiroCliCredentials() ?? refreshViaKiroCli();
               if (!freshCreds?.access) {
-                throw new Error("Kiro session expired. Please run: /login-kiro");
+                throw new Error("Kiro session expired. Please run: /login → Use a subscription → Kiro (works even if already configured)");
               }
               accessToken = freshCreds.access;
               notify("[kiro] Token refreshed via kiro-cli");

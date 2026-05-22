@@ -94,7 +94,7 @@ describe("Feature 9: Streaming Integration", () => {
     const events = await collect(stream);
     const error = events.find((e) => e.type === "error");
     expect(error).toBeDefined();
-    expect(error?.type === "error" && error.error.errorMessage).toContain("/login-kiro");
+    expect(error?.type === "error" && error.error.errorMessage).toContain("/login");
   });
 
   it("emits error with reason 'aborted' when signal is aborted", async () => {
