@@ -275,3 +275,28 @@ describe("truncation warning injection", () => {
     expect(toolResults?.[0]?.content?.[0]?.text).toMatch(/\[API Limitation\]/);
   });
 });
+
+describe("content truncation recovery", () => {
+  it("inserts synthetic user message after truncated assistant response", async () => {
+    const { saveContentTruncation } = await import("../src/truncation-cache.js");
+    const truncatedContent = "This is a truncated response";
+    saveContentTruncation(truncatedContent);
+
+    const ts = Date.now();
+    const messages: Message[] = [
+      { role: "user", content: "hello", timestamp: ts },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: truncatedContent }],
+        api: "kiro-api", provider: "kiro", model: "m",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        stopReason: "stop", timestamp: ts,
+      } as AssistantMessage,
+      { role: "user", content: "next", timestamp: ts },
+    ];
+
+    const { history } = buildHistory(messages, "model");
+    const syntheticEntry = history.find((h) => h.userInputMessage?.content?.includes("[System Notice]"));
+    expect(syntheticEntry).toBeDefined();
+  });
+});

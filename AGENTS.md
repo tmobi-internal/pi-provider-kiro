@@ -49,8 +49,9 @@ Raw bytes → `parseKiroEvents()` → typed `KiroStreamEvent` → `ThinkingTagPa
 `WEB_SEARCH_TOOL_SPEC` is injected when no tools are provided by the caller (matching llm-proxy behavior). When the caller provides tools, those are used as-is.
 
 ### Tool Input Truncation Recovery
-When Kiro API truncates a tool input mid-stream, `isTruncatedJson()` detects the malformed JSON. The provider emits the tool call with empty args and saves a warning to `truncation-cache.ts` (keyed by toolCallId). On the next request, `buildHistory()` in `transform.ts` consumes the warning and prepends `[API Limitation]` to the tool result so the model knows to retry. Inspired by `jwadow/kiro-gateway`.
+When Kiro API truncates a tool input mid-stream, `isTruncatedJson()` detects the malformed JSON. The provider emits the tool call with empty args and saves a warning to `truncation-cache.ts` (keyed by toolCallId). On the next request, `buildHistory()` in `transform.ts` consumes the warning and prepends `[API Limitation]` to the tool result so the model knows to retry.
 
+Content truncation is also detected: if the stream ends without a `contextUsage` event and there is text content but no tool calls, the content is saved by hash. On the next request, `buildHistory()` inserts a synthetic `[System Notice]` user message after the truncated assistant message. Inspired by `jwadow/kiro-gateway`.
 
 ### Retry with Reduction
 On 413/too-large: error propagated immediately to the caller (no retry). The caller is responsible for handling context overflow (e.g., compaction or history trimming), matching kiro-cli behavior.
