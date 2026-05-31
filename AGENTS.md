@@ -42,6 +42,11 @@ Kiro requires strict alternating `userInputMessage` / `assistantResponseMessage`
 ### Streaming Pipeline
 Raw bytes → `parseKiroEvents()` → typed `KiroStreamEvent` → `ThinkingTagParser` (if reasoning) → pi `AssistantMessageEventStream` events.
 
+### web_search Interception
+`web_search` tool calls from Kiro API are intercepted in `stream.ts` before reaching the pi agent loop. The provider calls the Kiro MCP endpoint (`https://q.{region}.amazonaws.com/mcp`) directly, injects the result into context, and recurses via `streamKiro`. pi sees only the final text response.
+
+`WEB_SEARCH_TOOL_SPEC` is injected when no tools are provided by the caller (matching llm-proxy behavior). When the caller provides tools, those are used as-is.
+
 ### Retry with Reduction
 On 413/too-large: error propagated immediately to the caller (no retry). The caller is responsible for handling context overflow (e.g., compaction or history trimming), matching kiro-cli behavior.
 

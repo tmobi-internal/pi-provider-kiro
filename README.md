@@ -150,6 +150,7 @@ This provider only keeps local recovery for Kiro-specific cases:
 - first-token / stalled-stream recovery
 - empty-stream retries
 - non-retryable Kiro body markers like `MONTHLY_REQUEST_COUNT` and `INSUFFICIENT_MODEL_CAPACITY`
+- `web_search` tool calls — injected into every request so the model can use web search; intercepted and resolved via Kiro MCP endpoint transparently, never exposed to the pi agent loop
 
 ## Development
 
