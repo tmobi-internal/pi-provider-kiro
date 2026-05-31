@@ -2215,3 +2215,146 @@ describe("Feature 9: Streaming Integration", () => {
     vi.unstubAllGlobals();
   });
 });
+
+
+describe("Feature 9: web_search interception", () => {
+  beforeEach(() => {
+    resetProfileArnCache(true);
+    vi.restoreAllMocks();
+  });
+
+  it("intercepts web_search tool call and forwards recursive stream", async () => {
+    const webSearchPayload = JSON.stringify({
+      name: "web_search",
+      toolUseId: "ws1",
+      input: JSON.stringify({ query: "test query" }),
+      stop: true,
+    });
+    const mcpResponse = {
+      result: { content: [{ text: JSON.stringify({ results: [{ title: "T", url: "u", snippet: "s" }] }) }] },
+    };
+    const finalPayload = JSON.stringify({ content: "search done" }) + JSON.stringify({ contextUsagePercentage: 10 });
+
+    const mockFetch = vi
+      .fn()
+      // main stream: web_search tool call
+      .mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: vi
+              .fn()
+              .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(webSearchPayload) })
+              .mockResolvedValueOnce({ done: true, value: undefined }),
+            cancel: vi.fn().mockResolvedValue(undefined),
+          }),
+        },
+      })
+      // MCP web_search call
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(mcpResponse) })
+      // recursive stream: final text response
+      .mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: vi
+              .fn()
+              .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(finalPayload) })
+              .mockResolvedValueOnce({ done: true, value: undefined }),
+            cancel: vi.fn().mockResolvedValue(undefined),
+          }),
+        },
+      });
+
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
+    const events = await collect(stream);
+
+    const done = events.find((e) => e.type === "done");
+    expect(done?.type === "done" && done.reason).toBe("stop");
+
+    // MCP endpoint should have been called with the query
+    const mcpCall = mockFetch.mock.calls.find((c) => (c[0] as string).includes("/mcp"));
+    expect(mcpCall).toBeDefined();
+    const mcpBody = JSON.parse(mcpCall![1].body as string);
+    expect(mcpBody.params.arguments.query).toBe("test query");
+
+    // start event should appear exactly once (inner stream's start is suppressed)
+    expect(events.filter((e) => e.type === "start")).toHaveLength(1);
+
+    // web_search tool call should NOT be exposed to pi agent loop
+    expect(events.filter((e) => e.type === "toolcall_start")).toHaveLength(0);
+    vi.unstubAllGlobals();
+  });
+
+  it("falls back gracefully when MCP returns empty results", async () => {
+    const webSearchPayload = JSON.stringify({
+      name: "web_search",
+      toolUseId: "ws2",
+      input: JSON.stringify({ query: "empty" }),
+      stop: true,
+    });
+    const mcpResponse = { result: { content: [{ text: JSON.stringify({ results: [] }) }] } };
+    const finalPayload = JSON.stringify({ content: "no results" }) + JSON.stringify({ contextUsagePercentage: 10 });
+
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: vi
+              .fn()
+              .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(webSearchPayload) })
+              .mockResolvedValueOnce({ done: true, value: undefined }),
+            cancel: vi.fn().mockResolvedValue(undefined),
+          }),
+        },
+      })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(mcpResponse) })
+      .mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: vi
+              .fn()
+              .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(finalPayload) })
+              .mockResolvedValueOnce({ done: true, value: undefined }),
+            cancel: vi.fn().mockResolvedValue(undefined),
+          }),
+        },
+      });
+
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
+    const events = await collect(stream);
+
+    const done = events.find((e) => e.type === "done");
+    expect(done?.type === "done" && done.reason).toBe("stop");
+
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("Feature 9: safety net error propagation", () => {
+  beforeEach(() => {
+    resetProfileArnCache(true);
+    vi.restoreAllMocks();
+  });
+
+  it("emits error event when fetch throws unexpectedly", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new Error("network failure")));
+
+    const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
+    const events = await collect(stream);
+
+    const error = events.find((e) => e.type === "error");
+    expect(error).toBeDefined();
+    expect(error?.type === "error" && error.reason).toBe("error");
+    expect(error?.type === "error" && error.error.errorMessage).toBe("network failure");
+
+    vi.unstubAllGlobals();
+  });
+});
