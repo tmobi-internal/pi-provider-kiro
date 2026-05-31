@@ -8,7 +8,7 @@ const toolCache = new Map<string, string>();
 const contentCache = new Map<string, string>();
 
 export function saveTruncationWarning(toolCallId: string, toolName: string): void {
-  toolCache.set(toolCallId, `[API Limitation] The tool input for "${toolName}" was truncated by the API. Please retry the same operation.`);
+  toolCache.set(toolCallId, `[API Limitation] The tool input for "${toolName}" was truncated by the API. Repeating the exact same operation will likely be truncated again — consider breaking it into smaller steps.`);
 }
 
 export function consumeTruncationWarning(toolCallId: string): string | undefined {

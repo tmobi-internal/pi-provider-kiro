@@ -273,6 +273,8 @@ describe("truncation warning injection", () => {
     const { history } = buildHistory(messages, "model");
     const toolResults = history.find((h) => h.userInputMessage?.userInputMessageContext?.toolResults)?.userInputMessage?.userInputMessageContext?.toolResults;
     expect(toolResults?.[0]?.content?.[0]?.text).toMatch(/\[API Limitation\]/);
+    expect(toolResults?.[0]?.content?.[0]?.text).toMatch(/truncated again/);
+    expect(toolResults?.[0]?.status).toBe("error");
   });
 });
 
