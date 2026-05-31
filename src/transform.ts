@@ -1,5 +1,6 @@
 // Feature 5: Message Transformation
 
+import { createHash } from "node:crypto";
 import type {
   AssistantMessage,
   ImageContent,
@@ -90,14 +91,37 @@ export function getContentText(msg: Message): string {
   return "";
 }
 
+const toolNameMap = new Map<string, string>();
+
+export function resolveOriginalToolName(truncatedName: string): string {
+  return toolNameMap.get(truncatedName) ?? truncatedName;
+}
+
+function sanitizeToolName(name: string): string {
+  if (name.length <= 64) return name;
+  const hash = createHash("md5").update(name).digest("hex").slice(0, 7);
+  const truncated = `${name.slice(0, 56)}_${hash}`;
+  toolNameMap.set(truncated, name);
+  return truncated;
+}
+
+
 export function convertToolsToKiro(tools: Tool[]): KiroToolSpec[] {
-  return tools.map((tool) => ({
-    toolSpecification: {
-      name: tool.name,
-      description: tool.description,
-      inputSchema: { json: tool.parameters as Record<string, unknown> },
-    },
-  }));
+  return tools.map((tool) => {
+    const params = tool.parameters as Record<string, unknown>;
+    const json: Record<string, unknown> = { ...params };
+    if (!Array.isArray(json.required) || (json.required as unknown[]).length === 0) {
+      delete json.required;
+    }
+    delete json.additionalProperties;
+    return {
+      toolSpecification: {
+        name: sanitizeToolName(tool.name),
+        description: tool.description,
+        inputSchema: { json },
+      },
+    };
+  });
 }
 
 export function convertImagesToKiro(images: Array<{ mimeType: string; data: string }>): KiroImage[] {
