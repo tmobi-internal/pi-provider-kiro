@@ -190,24 +190,24 @@ export function streamKiro(
   options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
   const stream = createAssistantMessageEventStream();
+  const output: AssistantMessage = {
+    role: "assistant",
+    content: [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "stop",
+    timestamp: Date.now(),
+  };
   (async () => {
-    const output: AssistantMessage = {
-      role: "assistant",
-      content: [],
-      api: model.api,
-      provider: model.provider,
-      model: model.id,
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: "stop",
-      timestamp: Date.now(),
-    };
     try {
       let accessToken = options?.apiKey;
       if (!accessToken) throw new Error("Kiro session expired. Please run: /login → Use a subscription → Kiro (works even if already configured)");
@@ -755,11 +755,14 @@ export function streamKiro(
       stream.push({ type: "error", reason: output.stopReason, error: output });
       stream.end();
     }
-  })().catch(() => {
+  })().catch((e) => {
     // Safety net: catch any rejection that escapes the inner try/catch
     // (e.g., AbortError during signal teardown). Without this, the
     // fire-and-forget IIFE produces an unhandled rejection that crashes pi.
     try {
+      output.stopReason = "error";
+      output.errorMessage = e instanceof Error ? e.message : String(e);
+      stream.push({ type: "error", reason: "error", error: output });
       stream.end();
     } catch {}
   });
