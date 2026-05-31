@@ -40,7 +40,10 @@ pi uses dashes (`claude-sonnet-4-6`), Kiro API uses dots (`claude-sonnet-4.6`). 
 ### Kiro History Format
 Kiro requires strict alternating `userInputMessage` / `assistantResponseMessage` entries. Tool results must be wrapped in synthetic user messages. `buildHistory()` in transform.ts handles this; `history.ts` sanitizes and truncates.
 
-### Streaming Pipeline
+### Tool Spec Sanitization
+`convertToolsToKiro()` sanitizes tool specs before sending to Kiro API: removes empty/null `required` arrays, removes `additionalProperties`, and truncates tool names over 64 chars (56 chars + `_` + 7-char MD5 hash). A reverse map restores original names when tool calls arrive in the stream.
+
+
 Raw bytes → `parseKiroEvents()` → typed `KiroStreamEvent` → `ThinkingTagParser` (if reasoning) → pi `AssistantMessageEventStream` events.
 
 ### web_search Interception

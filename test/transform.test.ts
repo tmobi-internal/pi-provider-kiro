@@ -6,6 +6,7 @@ import {
   convertToolsToKiro,
   getContentText,
   normalizeMessages,
+  resolveOriginalToolName,
   sanitizeSurrogates,
   TOOL_RESULT_LIMIT,
   truncate,
@@ -118,6 +119,27 @@ describe("Feature 5: Message Transformation", () => {
       const r = convertToolsToKiro(tools);
       expect(r[0].toolSpecification.name).toBe("bash");
       expect(r[0].toolSpecification.inputSchema.json).toEqual(tools[0].parameters);
+    });
+
+    it("removes empty required array from inputSchema", () => {
+      const tools: Tool[] = [{ name: "t", description: "d", parameters: { type: "object", properties: {}, required: [] } }];
+      const r = convertToolsToKiro(tools);
+      expect(r[0].toolSpecification.inputSchema.json).not.toHaveProperty("required");
+    });
+
+    it("removes additionalProperties from inputSchema", () => {
+      const tools: Tool[] = [{ name: "t", description: "d", parameters: { type: "object", properties: {}, additionalProperties: false } }];
+      const r = convertToolsToKiro(tools);
+      expect(r[0].toolSpecification.inputSchema.json).not.toHaveProperty("additionalProperties");
+    });
+
+    it("truncates tool name over 64 chars and restores on resolveOriginalToolName", () => {
+      const longName = "mcp__plugin_chrome-devtools-mcp_chrome-devtools__get_console_message";
+      const tools: Tool[] = [{ name: longName, description: "d", parameters: { type: "object", properties: {} } }];
+      const r = convertToolsToKiro(tools);
+      const truncated = r[0].toolSpecification.name;
+      expect(truncated.length).toBeLessThanOrEqual(64);
+      expect(resolveOriginalToolName(truncated)).toBe(longName);
     });
   });
 

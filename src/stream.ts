@@ -48,6 +48,7 @@ import {
   type KiroToolSpec,
   type KiroUserInputMessage,
   normalizeMessages,
+  resolveOriginalToolName,
   sanitizeSurrogates,
   TOOL_RESULT_LIMIT,
   truncate,
@@ -251,7 +252,7 @@ function emitToolCall(
   }
 
   const contentIndex = output.content.length;
-  const toolCall: ToolCall = { type: "toolCall", id: state.toolUseId, name: state.name, arguments: args };
+  const toolCall: ToolCall = { type: "toolCall", id: state.toolUseId, name: resolveOriginalToolName(state.name), arguments: args };
   output.content.push(toolCall);
   stream.push({ type: "toolcall_start", contentIndex, partial: output });
   stream.push({ type: "toolcall_delta", contentIndex, delta: state.input, partial: output });
