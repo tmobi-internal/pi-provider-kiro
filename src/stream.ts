@@ -107,6 +107,57 @@ interface KiroToolCallState {
   input: string;
 }
 
+
+const WEB_SEARCH_TOOL_SPEC: KiroToolSpec = {
+  toolSpecification: {
+    name: "web_search",
+    description: "Search the web for current information",
+    inputSchema: {
+      json: {
+        type: "object",
+        properties: { query: { type: "string", description: "Search query" } },
+        required: ["query"],
+      },
+    },
+  },
+};
+
+async function callMcpWebSearch(
+  query: string,
+  accessToken: string,
+  endpoint: string,
+): Promise<Array<{ title: string; url: string; snippet: string }>> {
+  const region = new URL(endpoint).hostname.split(".")[1] ?? "us-east-1";
+  const mcpUrl = `https://q.${region}.amazonaws.com/mcp`;
+
+  const response = await fetch(mcpUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "x-amzn-codewhisperer-optout": "false",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      id: `web_search_${Date.now()}`,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: { name: "web_search", arguments: { query } },
+    }),
+  });
+
+  if (!response.ok) return [];
+
+  const data = (await response.json()) as {
+    result?: { content?: Array<{ text: string }> };
+  };
+  const text = data.result?.content?.[0]?.text ?? "{}";
+  const parsed = JSON.parse(text) as {
+    results?: Array<{ title: string; url: string; snippet: string }>;
+  };
+
+  return parsed.results ?? [];
+}
+
 // --- profileArn resolution (cached per endpoint) ---
 const profileArnCache = new Map<string, string>();
 const profileArnPending = new Set<string>();
@@ -346,14 +397,14 @@ export function streamKiro(
           currentContent = `${TRUNCATION_NOTICE}\n\n${currentContent}`;
         }
         let uimc: { toolResults?: KiroToolResult[]; tools?: KiroToolSpec[] } | undefined;
-        if (currentToolResults.length > 0 || (context.tools && context.tools.length > 0)) {
+        {
           uimc = {};
           if (currentToolResults.length > 0) uimc.toolResults = currentToolResults;
-          if (context.tools?.length) {
-            let kt = convertToolsToKiro(context.tools);
-            if (history.length > 0) kt = addPlaceholderTools(kt, history);
-            uimc.tools = kt;
-          }
+          const hasWebSearch = context.tools?.some((t) => t.name === "web_search") ?? false;
+          let kt = context.tools?.length ? convertToolsToKiro(context.tools) : [];
+          if (!hasWebSearch) kt = [...kt, WEB_SEARCH_TOOL_SPEC];
+          if (history.length > 0) kt = addPlaceholderTools(kt, history);
+          uimc.tools = kt;
         }
         if (firstMsg?.role === "user") {
           const imgs = extractImages(firstMsg);
@@ -394,6 +445,7 @@ export function streamKiro(
             currentContentLen: currentContent.length,
             hasImages: !!currentImages,
             toolResultCount: currentToolResults.length,
+            tools: uimc?.tools?.map((t) => t.toolSpecification.name),
             request,
           });
           response = await fetch(endpoint, {
@@ -494,6 +546,45 @@ export function streamKiro(
           if (emitToolCall(currentToolCall, output, stream)) emittedToolCalls++;
           currentToolCall = null;
         };
+        let webSearchHandled = false;
+        const handleWebSearch = async (state: KiroToolCallState): Promise<boolean> => {
+          if (state.name !== "web_search") return false;
+          const args = JSON.parse(state.input || "{}") as { query?: string };
+          const query = args.query ?? "";
+          const results = await callMcpWebSearch(query, accessToken!, endpoint);
+          const now = Date.now();
+          const webSearchContext: Context = {
+            ...context,
+            messages: [
+              ...context.messages,
+              {
+                role: "assistant" as const,
+                content: [{ type: "toolCall" as const, id: state.toolUseId, name: state.name, arguments: args }],
+                api: model.api,
+                provider: model.provider,
+                model: model.id,
+                usage: output.usage,
+                stopReason: "toolUse" as const,
+                timestamp: now,
+              },
+              {
+                role: "toolResult" as const,
+                toolCallId: state.toolUseId,
+                toolName: state.name,
+                content: [{ type: "text" as const, text: JSON.stringify(results) }],
+                isError: false,
+                timestamp: now,
+              },
+            ],
+          };
+          const innerStream = streamKiro(model, webSearchContext, options);
+          for await (const evt of innerStream) {
+            if (evt.type === "start") continue;
+            stream.push(evt as Parameters<typeof stream.push>[0]);
+          }
+          webSearchHandled = true;
+          return true;
+        };
         const IDLE_TIMEOUT = 300_000;
         let idleTimer: ReturnType<typeof setTimeout> | null = null;
         const resetIdle = () => {
@@ -583,7 +674,13 @@ export function streamKiro(
                 }
                 currentToolCall.input += tc.input || "";
                 if (tc.input) totalContent += tc.input;
-                if (tc.stop) flushToolCall();
+                if (tc.stop) {
+                  if (currentToolCall && await handleWebSearch(currentToolCall)) {
+                    currentToolCall = null;
+                    break;
+                  }
+                  flushToolCall();
+                }
                 break;
               }
               case "toolUseInput": {
@@ -592,7 +689,13 @@ export function streamKiro(
                 break;
               }
               case "toolUseStop": {
-                if (event.data.stop) flushToolCall();
+                if (event.data.stop) {
+                  if (currentToolCall && await handleWebSearch(currentToolCall)) {
+                    currentToolCall = null;
+                    break;
+                  }
+                  flushToolCall();
+                }
                 break;
               }
               case "usage": {
@@ -609,8 +712,10 @@ export function streamKiro(
             }
             if (streamError) break;
           }
+          if (webSearchHandled) break;
         }
         if (idleTimer) clearTimeout(idleTimer);
+        if (webSearchHandled) break;
         if (firstTokenTimedOut || idleCancelled || streamError) {
           // Timed out or received error mid-stream: retry with backoff
           if (retryCount < maxRetries) {

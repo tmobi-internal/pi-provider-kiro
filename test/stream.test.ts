@@ -2358,3 +2358,58 @@ describe("Feature 9: safety net error propagation", () => {
     vi.unstubAllGlobals();
   });
 });
+
+
+describe("Feature 9: web_search tool injection", () => {
+  beforeEach(() => {
+    resetProfileArnCache(true);
+    vi.restoreAllMocks();
+  });
+
+  it("uses web_search as default tool when no tools provided", async () => {
+    const mockFetch = mockFetchOk(JSON.stringify({ content: "ok" }) + JSON.stringify({ contextUsagePercentage: 10 }));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
+    await collect(stream);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const tools = body.conversationState.currentMessage.userInputMessage.userInputMessageContext?.tools ?? [];
+    expect(tools.some((t: any) => t.toolSpecification?.name === "web_search")).toBe(true);
+    expect(tools).toHaveLength(1);
+
+    vi.unstubAllGlobals();
+  });
+
+  it("always appends web_search when not already in tools", async () => {
+    const mockFetch = mockFetchOk(JSON.stringify({ content: "ok" }) + JSON.stringify({ contextUsagePercentage: 10 }));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const ctx = { ...makeContext(), tools: [{ name: "bash", description: "run bash", parameters: { type: "object" as const, properties: {}, required: [] } }] };
+    const stream = streamKiro(makeModel(), ctx, { apiKey: "tok" });
+    await collect(stream);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const tools = body.conversationState.currentMessage.userInputMessage.userInputMessageContext?.tools ?? [];
+    expect(tools.some((t: any) => t.toolSpecification?.name === "web_search")).toBe(true);
+    expect(tools.some((t: any) => t.toolSpecification?.name === "bash")).toBe(true);
+
+    vi.unstubAllGlobals();
+  });
+
+  it("does not duplicate web_search when already in tools", async () => {
+    const mockFetch = mockFetchOk(JSON.stringify({ content: "ok" }) + JSON.stringify({ contextUsagePercentage: 10 }));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const ctx = { ...makeContext(), tools: [{ name: "web_search", description: "Search the web", parameters: { type: "object" as const, properties: {}, required: [] } }] };
+    const stream = streamKiro(makeModel(), ctx, { apiKey: "tok" });
+    await collect(stream);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const tools = body.conversationState.currentMessage.userInputMessage.userInputMessageContext?.tools ?? [];
+    const webSearchCount = tools.filter((t: any) => t.toolSpecification?.name === "web_search").length;
+    expect(webSearchCount).toBe(1);
+
+    vi.unstubAllGlobals();
+  });
+});
