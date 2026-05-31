@@ -53,7 +53,7 @@ import {
   truncate,
 } from "./transform.js";
 import { TRUNCATION_NOTICE, wasPreviousResponseTruncated } from "./truncation.js";
-import { saveTruncationWarning } from "./truncation-cache.js";
+import { saveTruncationWarning, saveContentTruncation } from "./truncation-cache.js";
 
 const CAPACITY_LOG_DIR = join(homedir(), ".pi", "logs");
 const CAPACITY_LOG_FILE = join(CAPACITY_LOG_DIR, "capacity-retries.log");
@@ -244,7 +244,6 @@ function emitToolCall(
       notify(`[kiro] Tool input truncated for "${state.name}" — using empty args`, "warning");
       args = {};
       state.truncated = true;
-      saveTruncationWarning(state.toolUseId, state.name);
     } else {
       notify(`[kiro] Failed to parse tool input for "${state.name}"`, "warning");
       return false;
@@ -565,10 +564,14 @@ export function streamKiro(
         let textBlockIndex: number | null = null;
         let emittedToolCalls = 0;
         let sawAnyToolCalls = false;
+        const truncatedToolCalls: KiroToolCallState[] = [];
         let currentToolCall: KiroToolCallState | null = null;
         const flushToolCall = () => {
           if (!currentToolCall) return;
-          if (emitToolCall(currentToolCall, output, stream)) emittedToolCalls++;
+          if (emitToolCall(currentToolCall, output, stream)) {
+            emittedToolCalls++;
+            if (currentToolCall.truncated) truncatedToolCalls.push(currentToolCall);
+          }
           currentToolCall = null;
         };
         let webSearchHandled = false;
@@ -756,6 +759,17 @@ export function streamKiro(
         }
         if (currentToolCall && emitToolCall(currentToolCall, output, stream)) {
           emittedToolCalls++;
+          if (currentToolCall.truncated) truncatedToolCalls.push(currentToolCall);
+          currentToolCall = null;
+        }
+        // Save truncation state after stream completes (kiro-gateway style)
+        for (const tc of truncatedToolCalls) {
+          saveTruncationWarning(tc.toolUseId, tc.name);
+        }
+        const contentText = textBlockIndex !== null ? (output.content[textBlockIndex] as TextContent).text : "";
+        const contentTruncated = !receivedContextUsage && contentText.length > 0 && emittedToolCalls === 0;
+        if (contentTruncated) {
+          saveContentTruncation(contentText);
         }
         if (thinkingParser) {
           thinkingParser.finalize();

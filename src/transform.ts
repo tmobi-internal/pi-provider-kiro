@@ -10,7 +10,7 @@ import type {
   ToolCall,
   ToolResultMessage,
 } from "@mariozechner/pi-ai";
-import { consumeTruncationWarning } from "./truncation-cache.js";
+import { consumeTruncationWarning, consumeContentTruncation } from "./truncation-cache.js";
 
 
 export interface KiroImage {
@@ -167,6 +167,10 @@ export function buildHistory(
       history.push({
         assistantResponseMessage: { content: armContent, ...(armToolUses.length > 0 ? { toolUses: armToolUses } : {}) },
       });
+      const contentWarning = consumeContentTruncation(armContent);
+      if (contentWarning) {
+        history.push({ userInputMessage: { content: contentWarning, modelId, origin: "KIRO_CLI" } });
+      }
     } else if (msg.role === "toolResult") {
       const trMsg = msg as ToolResultMessage;
       const toolResults: KiroToolResult[] = [
