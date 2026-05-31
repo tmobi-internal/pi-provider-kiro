@@ -250,3 +250,28 @@ describe("Feature 5: Message Transformation", () => {
     });
   });
 });
+
+describe("truncation warning injection", () => {
+  it("prepends [API Limitation] warning to tool result in next request", async () => {
+    const { saveTruncationWarning } = await import("../src/truncation-cache.js");
+    saveTruncationWarning("tc1", "edit");
+
+    const ts = Date.now();
+    const messages: Message[] = [
+      { role: "user", content: "fix it", timestamp: ts },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "tc1", name: "edit", arguments: {} }],
+        api: "kiro-api", provider: "kiro", model: "m",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        stopReason: "toolUse", timestamp: ts,
+      } as AssistantMessage,
+      { role: "toolResult", toolCallId: "tc1", toolName: "edit", content: [{ type: "text", text: "done" }], isError: false, timestamp: ts } as ToolResultMessage,
+      { role: "user", content: "next", timestamp: ts },
+    ];
+
+    const { history } = buildHistory(messages, "model");
+    const toolResults = history.find((h) => h.userInputMessage?.userInputMessageContext?.toolResults)?.userInputMessage?.userInputMessageContext?.toolResults;
+    expect(toolResults?.[0]?.content?.[0]?.text).toMatch(/\[API Limitation\]/);
+  });
+});

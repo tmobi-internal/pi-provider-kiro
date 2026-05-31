@@ -53,6 +53,7 @@ import {
   truncate,
 } from "./transform.js";
 import { TRUNCATION_NOTICE, wasPreviousResponseTruncated } from "./truncation.js";
+import { saveTruncationWarning } from "./truncation-cache.js";
 
 const CAPACITY_LOG_DIR = join(homedir(), ".pi", "logs");
 const CAPACITY_LOG_FILE = join(CAPACITY_LOG_DIR, "capacity-retries.log");
@@ -105,6 +106,23 @@ interface KiroToolCallState {
   toolUseId: string;
   name: string;
   input: string;
+  truncated?: boolean;
+}
+
+
+
+function isTruncatedJson(input: string): boolean {
+  const s = input.trim();
+  if (!s) return false;
+  const opens = (s.match(/\{/g) ?? []).length;
+  const closes = (s.match(/\}/g) ?? []).length;
+  if (opens !== closes) return true;
+  const arrOpens = (s.match(/\[/g) ?? []).length;
+  const arrCloses = (s.match(/\]/g) ?? []).length;
+  if (arrOpens !== arrCloses) return true;
+  const quotes = (s.match(/(?<!\\)"/g) ?? []).length;
+  if (quotes % 2 !== 0) return true;
+  return false;
 }
 
 
@@ -222,8 +240,15 @@ function emitToolCall(
   try {
     args = JSON.parse(state.input) as Record<string, unknown>;
   } catch (e) {
-    notify(`[kiro] Failed to parse tool input for "${state.name}"`, "warning");
-    return false;
+    if (isTruncatedJson(state.input)) {
+      notify(`[kiro] Tool input truncated for "${state.name}" — using empty args`, "warning");
+      args = {};
+      state.truncated = true;
+      saveTruncationWarning(state.toolUseId, state.name);
+    } else {
+      notify(`[kiro] Failed to parse tool input for "${state.name}"`, "warning");
+      return false;
+    }
   }
 
   const contentIndex = output.content.length;
