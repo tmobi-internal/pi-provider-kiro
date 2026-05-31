@@ -173,14 +173,14 @@ export function buildHistory(
       }
     } else if (msg.role === "toolResult") {
       const trMsg = msg as ToolResultMessage;
+      const truncationWarning = consumeTruncationWarning(trMsg.toolCallId);
       const toolResults: KiroToolResult[] = [
         {
           content: [{ text: (() => {
-            const warning = consumeTruncationWarning(trMsg.toolCallId);
             const text = truncate(getContentText(msg), toolResultLimit);
-            return warning ? `${warning}\n\n${text}` : text;
+            return truncationWarning ? `${truncationWarning}\n\n${text}` : text;
           })() }],
-          status: trMsg.isError ? "error" : "success",
+          status: truncationWarning ? "error" : trMsg.isError ? "error" : "success",
           toolUseId: trMsg.toolCallId,
         },
       ];
