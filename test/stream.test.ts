@@ -1670,6 +1670,63 @@ describe("Feature 9: Streaming Integration", () => {
     vi.unstubAllGlobals();
   });
 
+  it("usage.input falls back to contextUsage when usage event has inputTokens=0", async () => {
+    const mockFetch = mockFetchChunked([
+      '{"content":"Hello"}',
+      '{"contextUsagePercentage":35}',
+      '{"usage":{"inputTokens":0,"outputTokens":0}}',
+    ]);
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
+    const events = await collect(stream);
+    const done = events.find((e) => e.type === "done");
+    const msg = done?.type === "done" ? done.message : undefined;
+
+    // contextUsage = 35% of 200K = 70000, should NOT be overwritten by inputTokens=0
+    expect(msg?.usage.input).toBe(Math.round(0.35 * 200000));
+    expect(msg?.usage.totalTokens).toBeGreaterThan(0);
+
+    vi.unstubAllGlobals();
+  });
+
+  it("usage.input falls back to tiktoken estimate when both contextUsage and usage event are missing", async () => {
+    // Stream ends without contextUsage (truncation) and no usage event
+    const mockFetch = mockFetchOk('{"content":"partial response"}');
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel({ reasoning: false }), makeContext("A long user message for estimation"), { apiKey: "tok" });
+    const events = await collect(stream);
+    const done = events.find((e) => e.type === "done");
+    const msg = done?.type === "done" ? done.message : undefined;
+
+    // Without contextUsage, input should fall back to tiktoken estimate (not 0)
+    expect(msg?.usage.input).toBeGreaterThan(0);
+    expect(msg?.usage.totalTokens).toBeGreaterThan(0);
+
+    vi.unstubAllGlobals();
+  });
+
+  it("usage.output falls back to tiktoken when usage event has outputTokens=0", async () => {
+    const mockFetch = mockFetchChunked([
+      '{"content":"Some actual response content here"}',
+      '{"contextUsagePercentage":20}',
+      '{"usage":{"inputTokens":50000,"outputTokens":0}}',
+    ]);
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), makeContext(), { apiKey: "tok" });
+    const events = await collect(stream);
+    const done = events.find((e) => e.type === "done");
+    const msg = done?.type === "done" ? done.message : undefined;
+
+    // outputTokens=0 should fall back to tiktoken estimate of totalContent
+    expect(msg?.usage.output).toBeGreaterThan(0);
+    expect(msg?.usage.totalTokens).toBeGreaterThan(50000);
+
+    vi.unstubAllGlobals();
+  });
+
   // =========================================================================
   // Truncation recovery (Task 4.1)
   // =========================================================================
