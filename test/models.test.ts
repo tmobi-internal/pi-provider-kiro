@@ -101,14 +101,8 @@ describe("Feature 2: Model Definitions", () => {
       expect(kiroModels.every((m) => m.cost.input === 0 && m.cost.output === 0)).toBe(true);
     });
 
-    it("opus models have expected max tokens", () => {
-      const opusModels = kiroModels.filter((m) => m.id.includes("opus"));
-      expect(opusModels.every((m) => m.maxTokens === 32768 || m.maxTokens === 128000)).toBe(true);
-    });
-
-    it("non-Claude models (except auto) have 8K max tokens", () => {
-      const nonClaudeModels = kiroModels.filter((m) => !m.id.startsWith("claude-") && m.id !== "auto");
-      expect(nonClaudeModels.every((m) => m.maxTokens === 8192)).toBe(true);
+    it("all models have 64000 max tokens", () => {
+      expect(kiroModels.every((m) => m.maxTokens === 64000)).toBe(true);
     });
   });
 
