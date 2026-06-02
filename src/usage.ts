@@ -1,7 +1,7 @@
 // ABOUTME: Fetches Kiro account usage via AmazonCodeWhispererService.GetUsageLimits.
 // ABOUTME: Maps the backend response into pi's generic OAuthProviderUsage shape for /settings.
 
-import type { OAuthCredentials } from "@mariozechner/pi-ai";
+import type { OAuthCredentials } from "@earendil-works/pi-ai";
 import type { KiroCredentials } from "./oauth.js";
 
 const USAGE_ENDPOINT = "https://q.{region}.amazonaws.com/";

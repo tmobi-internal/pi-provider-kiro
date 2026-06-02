@@ -58,7 +58,6 @@ describe("Feature 2: Model Definitions", () => {
       expect(filterModelsByRegion(kiroModels, "eu-central-1")).toHaveLength(kiroModels.length);
     });
   });
-  });
 
   describe("model catalog", () => {
     it("defines at least 5 models", () => {

@@ -14,7 +14,7 @@
 // region automatically via resolveApiRegion() in models.ts.
 
 import { execFileSync } from "node:child_process";
-import type { OAuthCredentials, OAuthLoginCallbacks } from "@mariozechner/pi-ai";
+import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import { showLoginUI } from "./login-ui.js";
 import { BUILDER_ID_START_URL, type KiroAuthMethod, type KiroCredentials, SSO_SCOPES } from "./oauth.js";
 

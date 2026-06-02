@@ -1,7 +1,7 @@
 // ABOUTME: Tests for truncation detection and recovery notice injection.
 // ABOUTME: Validates wasPreviousResponseTruncated and TRUNCATION_NOTICE.
 
-import type { AssistantMessage, Message } from "@mariozechner/pi-ai";
+import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { TRUNCATION_NOTICE, wasPreviousResponseTruncated } from "../src/truncation.js";
 

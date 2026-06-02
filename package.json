@@ -21,7 +21,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc && esbuild dist/index.js --bundle --platform=node --format=esm --outfile=dist/index.js --allow-overwrite --external:@mariozechner/pi-ai --external:@mariozechner/pi-coding-agent --external:@mariozechner/pi-tui",
+    "clean": "rm -rf dist",
+    "build": "tsc && esbuild dist/index.js --bundle --platform=node --format=esm --outfile=dist/index.js --allow-overwrite --external:@earendil-works/pi-ai --external:@earendil-works/pi-coding-agent --external:@earendil-works/pi-tui",
     "check": "tsc --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
@@ -36,11 +37,17 @@
       "./dist/index.js"
     ]
   },
+  "dependencies": {
+    "js-tiktoken": "^1.0.21"
+  },
   "devDependencies": {
     "@biomejs/biome": "2.4.2",
-    "@mariozechner/pi-ai": "^0.53.0",
-    "@mariozechner/pi-coding-agent": "^0.53.0",
-    "js-tiktoken": "^1.0.21",
+    "@earendil-works/pi-ai": "^0.78.0",
+    "@earendil-works/pi-coding-agent": "^0.78.0",
+    "@earendil-works/pi-tui": "^0.78.0",
+    "@smithy/eventstream-codec": "^4.0.0",
+    "@smithy/util-utf8": "^4.0.0",
+    "esbuild": "^0.25.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }

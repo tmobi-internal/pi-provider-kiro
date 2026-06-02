@@ -11,3 +11,5 @@ dist/
 # Dev logs (agile workflow state)
 devlogs/
 .idea/
+.codegraph/
+pnpm-workspace.yaml

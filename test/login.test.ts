@@ -1,4 +1,4 @@
-import type { OAuthLoginCallbacks } from "@mariozechner/pi-ai";
+import type { OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { interactiveLogin } from "../src/login.js";
 import type { KiroCredentials } from "../src/oauth.js";

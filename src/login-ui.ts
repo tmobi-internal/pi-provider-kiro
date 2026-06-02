@@ -6,8 +6,8 @@
 // Phase 1: SelectList — pick login method (Builder ID / IdC / Google / GitHub)
 // Phase 2: Input — enter IAM Identity Center start URL (only for option 2)
 
-import { DynamicBorder, type ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Container, Input, type SelectItem, SelectList, Text } from "@mariozechner/pi-tui";
+import { DynamicBorder, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Container, Input, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
 
 
 export type LoginChoice =

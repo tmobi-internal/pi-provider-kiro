@@ -10,7 +10,7 @@ import type {
   Tool,
   ToolCall,
   ToolResultMessage,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
 import { consumeTruncationWarning, consumeContentTruncation } from "./truncation-cache.js";
 
 
