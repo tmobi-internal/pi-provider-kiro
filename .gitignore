@@ -7,3 +7,6 @@ dist/
 .agents/
 .ralph/
 *.tgz
+
+# Dev logs (agile workflow state)
+devlogs/

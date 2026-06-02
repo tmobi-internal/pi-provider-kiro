@@ -825,8 +825,9 @@ export function streamKiro(
         // (accumulated into `totalContent` above). Otherwise tool-call-only
         // turns report 0 output tokens and break consumers like the TPS
         // extension that watch `usage.output`.
-        if (usageEvent?.inputTokens !== undefined) output.usage.input = usageEvent.inputTokens;
-        output.usage.output = usageEvent?.outputTokens ?? countTokens(totalContent);
+        const inputFallback = output.usage.input || countTokens(JSON.stringify(request));
+        output.usage.input = usageEvent?.inputTokens || inputFallback;
+        output.usage.output = usageEvent?.outputTokens || countTokens(totalContent);
         output.usage.totalTokens = output.usage.input + output.usage.output;
         try {
           calculateCost(model, output.usage);
