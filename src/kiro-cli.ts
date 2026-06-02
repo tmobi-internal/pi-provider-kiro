@@ -7,7 +7,6 @@ import { createRequire } from "node:module";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import type { KiroAuthMethod, KiroCredentials } from "./oauth.js";
-
 const require = createRequire(import.meta.url);
 
 export function getKiroCliDbPath(): string | undefined {
