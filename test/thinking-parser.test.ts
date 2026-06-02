@@ -1,5 +1,5 @@
-import type { AssistantMessage, AssistantMessageEvent } from "@mariozechner/pi-ai";
-import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
+import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { ThinkingTagParser } from "../src/thinking-parser.js";
 

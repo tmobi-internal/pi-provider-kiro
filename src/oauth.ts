@@ -7,7 +7,7 @@
 // Login and token refresh are delegated to kiro-cli.
 // When token expires, the user is prompted to re-login via kiro-cli.
 
-import type { OAuthCredentials, OAuthLoginCallbacks } from "@mariozechner/pi-ai";
+import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import { getKiroIdeCredentials } from "./kiro-ide.js";
 import { interactiveLogin, loginViaKiroCli } from "./login.js";
 import { notify } from "./notify.js";

@@ -2,8 +2,8 @@
 //
 // Entry point that wires all features together via pi.registerProvider().
 
-import type { Api, Model, OAuthCredentials } from "@mariozechner/pi-ai";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { Api, Model, OAuthCredentials } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getKiroCliCredentials } from "./kiro-cli.js";
 import { setExtensionContext } from "./login-ui.js";
 import { setNotifyContext } from "./notify.js";

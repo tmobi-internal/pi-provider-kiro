@@ -16,8 +16,8 @@ import type {
   TextContent,
   ToolCall,
   ToolResultMessage,
-} from "@mariozechner/pi-ai";
-import { calculateCost, createAssistantMessageEventStream } from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
+import { calculateCost, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { parseBracketToolCalls } from "./bracket-tool-parser.js";
 import { debugEnabled, debugLog } from "./debug.js";
 import { parseKiroEvents, parseKiroEventsFromBinary, resetBinaryBuffer } from "./event-parser.js";
