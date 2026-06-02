@@ -20,7 +20,7 @@ import type {
 import { calculateCost, createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 import { parseBracketToolCalls } from "./bracket-tool-parser.js";
 import { debugEnabled, debugLog } from "./debug.js";
-import { parseKiroEvents } from "./event-parser.js";
+import { parseKiroEvents, parseKiroEventsFromBinary, resetBinaryBuffer } from "./event-parser.js";
 import { addPlaceholderTools, HISTORY_LIMIT, HISTORY_LIMIT_CONTEXT_WINDOW, truncateHistory } from "./history.js";
 import { getKiroCliCredentials, refreshViaKiroCli } from "./kiro-cli.js";
 import { notify } from "./notify.js";
@@ -557,6 +557,8 @@ export function streamKiro(
         if (!reader) throw new Error("No response body");
         const decoder = new TextDecoder();
         let buffer = "";
+        let useBinaryParser = true; // try Smithy first, fallback to text on failure
+        resetBinaryBuffer();
         let totalContent = "";
         let lastContentData = "";
         let usageEvent: { inputTokens?: number; outputTokens?: number } | null = null;
@@ -656,9 +658,25 @@ export function streamKiro(
           }
           const { done, value } = readResult;
           if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const { events, remaining } = parseKiroEvents(buffer);
-          buffer = remaining;
+          let events: import("./event-parser.js").KiroStreamEvent[];
+          if (useBinaryParser) {
+            const binaryEvents = parseKiroEventsFromBinary(value);
+            if (binaryEvents !== null) {
+              events = binaryEvents;
+            } else {
+              // Binary parse failed — switch to text fallback permanently
+              useBinaryParser = false;
+              buffer += decoder.decode(value, { stream: true });
+              const result = parseKiroEvents(buffer);
+              events = result.events;
+              buffer = result.remaining;
+            }
+          } else {
+            buffer += decoder.decode(value, { stream: true });
+            const result = parseKiroEvents(buffer);
+            events = result.events;
+            buffer = result.remaining;
+          }
           if (debugEnabled() && events.length > 0) debugLog("stream.events", events);
           // Reset idle timer on any bytes received — large tool call inputs
           // span many chunks that parse as zero events (incomplete JSON) but

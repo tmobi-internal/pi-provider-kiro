@@ -140,3 +140,83 @@ export function parseKiroEvents(buffer: string): { events: KiroStreamEvent[]; re
 
   return { events, remaining: "" };
 }
+
+// --- Binary Event Stream decoding (Smithy) ---
+
+import { EventStreamCodec } from "@smithy/eventstream-codec";
+import { toUtf8, fromUtf8 } from "@smithy/util-utf8";
+
+const smithyCodec = new EventStreamCodec(toUtf8, fromUtf8);
+
+/**
+ * Attempt to decode binary Event Stream framed data into KiroStreamEvents.
+ * Returns null if the chunk is not valid binary framing (fallback to text parser).
+ * Uses an internal buffer to handle message boundary reassembly.
+ */
+let binaryBuffer = new Uint8Array(0);
+
+export function resetBinaryBuffer(): void {
+  binaryBuffer = new Uint8Array(0);
+}
+
+export function parseKiroEventsFromBinary(chunk: Uint8Array): KiroStreamEvent[] | null {
+  if (!smithyCodec) return null;
+
+  // Append chunk to buffer
+  const combined = new Uint8Array(binaryBuffer.length + chunk.length);
+  combined.set(binaryBuffer);
+  combined.set(chunk, binaryBuffer.length);
+  binaryBuffer = combined;
+
+  const events: KiroStreamEvent[] = [];
+
+  // AWS Event Stream messages: 4-byte big-endian total length at start
+  let decoded = false;
+  while (binaryBuffer.length >= 4) {
+    const totalLen = new DataView(binaryBuffer.buffer, binaryBuffer.byteOffset).getUint32(0);
+    if (totalLen < 16 || totalLen > 16 * 1024 * 1024) {
+      // Invalid framing — not a binary event stream
+      binaryBuffer = new Uint8Array(0);
+      return null;
+    }
+    if (binaryBuffer.length < totalLen) break; // incomplete message
+    decoded = true;
+
+    const msgBytes = binaryBuffer.slice(0, totalLen);
+    binaryBuffer = binaryBuffer.slice(totalLen);
+
+    try {
+      const msg = smithyCodec.decode(msgBytes);
+      const headerType = msg.headers[":message-type"]?.value;
+
+      if (headerType === "exception" || headerType === "error") {
+        const body = toUtf8(msg.body);
+        try {
+          const parsed = JSON.parse(body);
+          const event = parseKiroEvent(parsed);
+          if (event) events.push(event);
+        } catch {
+          events.push({ type: "error", data: { error: body } });
+        }
+        continue;
+      }
+
+      if (msg.body.length > 0) {
+        const body = toUtf8(msg.body);
+        try {
+          const parsed = JSON.parse(body) as Record<string, unknown>;
+          const event = parseKiroEvent(parsed);
+          if (event) events.push(event);
+        } catch {
+          // Non-JSON body — skip
+        }
+      }
+    } catch {
+      // Invalid framing — not a binary event stream
+      binaryBuffer = new Uint8Array(0);
+      return null;
+    }
+  }
+
+  return events;
+}
