@@ -169,7 +169,7 @@ export const kiroModels = [
     input: ["text", "image"] as ("text" | "image")[],
     cost: ZERO_COST,
     contextWindow: 1000000,
-    maxTokens: 32768,
+    maxTokens: 64000,
     firstTokenTimeout: 180_000,
   },
   // Claude Sonnet 4.6
@@ -183,7 +183,7 @@ export const kiroModels = [
     input: ["text", "image"] as ("text" | "image")[],
     cost: ZERO_COST,
     contextWindow: 1000000,
-    maxTokens: 65536,
+    maxTokens: 64000,
   },
   // Claude Opus 4.5
   {
@@ -196,7 +196,7 @@ export const kiroModels = [
     input: ["text", "image"] as ("text" | "image")[],
     cost: ZERO_COST,
     contextWindow: 200000,
-    maxTokens: 32768,
+    maxTokens: 64000,
   },
   // Claude Sonnet 4.5
   {
@@ -209,7 +209,7 @@ export const kiroModels = [
     input: ["text", "image"] as ("text" | "image")[],
     cost: ZERO_COST,
     contextWindow: 200000,
-    maxTokens: 65536,
+    maxTokens: 64000,
   },
   // Claude Sonnet 4
   {
@@ -222,7 +222,7 @@ export const kiroModels = [
     input: ["text", "image"] as ("text" | "image")[],
     cost: ZERO_COST,
     contextWindow: 200000,
-    maxTokens: 65536,
+    maxTokens: 64000,
   },
   // Claude Haiku 4.5
   {
@@ -235,7 +235,7 @@ export const kiroModels = [
     input: ["text", "image"] as ("text" | "image")[],
     cost: ZERO_COST,
     contextWindow: 200000,
-    maxTokens: 65536,
+    maxTokens: 64000,
   },
   // DeepSeek
   {
@@ -247,8 +247,8 @@ export const kiroModels = [
     reasoning: true,
     input: ["text"] as ("text" | "image")[],
     cost: ZERO_COST,
-    contextWindow: 128000,
-    maxTokens: 8192,
+    contextWindow: 164000,
+    maxTokens: 64000,
   },
   // MiniMax
   {
@@ -260,8 +260,8 @@ export const kiroModels = [
     reasoning: false,
     input: ["text"] as ("text" | "image")[],
     cost: ZERO_COST,
-    contextWindow: 200000,
-    maxTokens: 8192,
+    contextWindow: 196000,
+    maxTokens: 64000,
   },
   {
     id: "minimax-m2-1",
@@ -272,8 +272,8 @@ export const kiroModels = [
     reasoning: false,
     input: ["text"] as ("text" | "image")[],
     cost: ZERO_COST,
-    contextWindow: 200000,
-    maxTokens: 8192,
+    contextWindow: 196000,
+    maxTokens: 64000,
   },
   // GLM (Zhipu AI)
   {
@@ -286,7 +286,7 @@ export const kiroModels = [
     input: ["text"] as ("text" | "image")[],
     cost: ZERO_COST,
     contextWindow: 200000,
-    maxTokens: 8192,
+    maxTokens: 64000,
   },
   // Qwen (Alibaba)
   {
@@ -299,7 +299,7 @@ export const kiroModels = [
     input: ["text"] as ("text" | "image")[],
     cost: ZERO_COST,
     contextWindow: 256000,
-    maxTokens: 8192,
+    maxTokens: 64000,
   },
   // Auto — routes to optimal model per task
   {
@@ -311,7 +311,7 @@ export const kiroModels = [
     reasoning: true,
     input: ["text", "image"] as ("text" | "image")[],
     cost: ZERO_COST,
-    contextWindow: 200000,
-    maxTokens: 65536,
+    contextWindow: 1000000,
+    maxTokens: 64000,
   },
 ];
