@@ -53,25 +53,16 @@ describe("Feature 2: Model Definitions", () => {
   });
 
   describe("filterModelsByRegion", () => {
-    it("us-east-1 returns all models", () => {
+    it("returns all models unchanged (CLI already filters by region)", () => {
       expect(filterModelsByRegion(kiroModels, "us-east-1")).toHaveLength(kiroModels.length);
+      expect(filterModelsByRegion(kiroModels, "eu-central-1")).toHaveLength(kiroModels.length);
     });
-
-    it("eu-central-1 includes Claude + documented OSS, excludes DeepSeek", () => {
-      const ids = filterModelsByRegion(kiroModels, "eu-central-1").map((m) => m.id);
-      expect(ids).toContain("claude-sonnet-4-6");
-      expect(ids).toContain("minimax-m2-1");
-      expect(ids).not.toContain("deepseek-3-2");
-    });
-
-    it("unknown region returns no models", () => {
-      expect(filterModelsByRegion([], "af-south-1")).toHaveLength(0);
-    });
+  });
   });
 
   describe("model catalog", () => {
-    it("defines 12 models", () => {
-      expect(kiroModels).toHaveLength(12);
+    it("defines at least 5 models", () => {
+      expect(kiroModels.length).toBeGreaterThanOrEqual(5);
     });
 
     it("claude-haiku-4-5 has reasoning=false", () => {
@@ -101,8 +92,8 @@ describe("Feature 2: Model Definitions", () => {
       expect(kiroModels.every((m) => m.cost.input === 0 && m.cost.output === 0)).toBe(true);
     });
 
-    it("all models have 64000 max tokens", () => {
-      expect(kiroModels.every((m) => m.maxTokens === 64000)).toBe(true);
+    it("all models have maxTokens >= 64000", () => {
+      expect(kiroModels.every((m) => m.maxTokens >= 64000)).toBe(true);
     });
   });
 

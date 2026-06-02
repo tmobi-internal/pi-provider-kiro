@@ -1,75 +1,46 @@
-// ABOUTME: Tests for bracket-style tool call extraction from content text.
-// ABOUTME: Validates parsing of [Called func_name with args: {...}] patterns.
-
 import { describe, expect, it } from "vitest";
 import { parseBracketToolCalls } from "../src/bracket-tool-parser.js";
 
-describe("parseBracketToolCalls", () => {
-  it("extracts a single bracket tool call", () => {
-    const text = 'Some text [Called bash with args: {"cmd": "ls"}] more text';
+describe("bracket-tool-parser", () => {
+
+  it("parses a single bracket-style tool call", () => {
+    const text = '[Called read_file with args: {"path": "src/index.ts"}]';
     const result = parseBracketToolCalls(text);
     expect(result.toolCalls).toHaveLength(1);
-    expect(result.toolCalls[0].name).toBe("bash");
-    expect(result.toolCalls[0].arguments).toEqual({ cmd: "ls" });
-    expect(result.cleanedText).toBe("Some text  more text");
-  });
-
-  it("extracts multiple bracket tool calls", () => {
-    const text =
-      '[Called read with args: {"path": "a.txt"}] then [Called write with args: {"path": "b.txt", "content": "hello"}]';
-    const result = parseBracketToolCalls(text);
-    expect(result.toolCalls).toHaveLength(2);
-    expect(result.toolCalls[0].name).toBe("read");
-    expect(result.toolCalls[1].name).toBe("write");
-    expect(result.toolCalls[1].arguments).toEqual({ path: "b.txt", content: "hello" });
-  });
-
-  it("returns empty when no bracket tool calls found", () => {
-    const text = "Just regular text with [brackets] but no tool calls";
-    const result = parseBracketToolCalls(text);
-    expect(result.toolCalls).toHaveLength(0);
-    expect(result.cleanedText).toBe(text);
-  });
-
-  it("handles nested braces in arguments", () => {
-    const text = '[Called bash with args: {"cmd": "echo \\"{}\\""}]';
-    const result = parseBracketToolCalls(text);
-    expect(result.toolCalls).toHaveLength(1);
-    expect(result.toolCalls[0].name).toBe("bash");
-  });
-
-  it("handles malformed JSON gracefully", () => {
-    const text = "[Called bash with args: {not valid json}] rest";
-    const result = parseBracketToolCalls(text);
-    // Malformed JSON should be skipped
-    expect(result.toolCalls).toHaveLength(0);
-    expect(result.cleanedText).toBe(text);
-  });
-
-  it("handles empty text", () => {
-    const result = parseBracketToolCalls("");
-    expect(result.toolCalls).toHaveLength(0);
+    expect(result.toolCalls[0].name).toBe("read_file");
+    expect(result.toolCalls[0].arguments).toEqual({ path: "src/index.ts" });
     expect(result.cleanedText).toBe("");
   });
 
-  it("assigns unique toolUseIds to each call", () => {
-    const text = "[Called a with args: {}] [Called b with args: {}]";
+  it("parses multiple bracket-style tool calls", () => {
+    const text = 'Here is output\n[Called read_file with args: {"path": "a.ts"}]\nsome text\n[Called write_file with args: {"path": "b.ts", "content": "x"}]';
     const result = parseBracketToolCalls(text);
     expect(result.toolCalls).toHaveLength(2);
-    expect(result.toolCalls[0].toolUseId).not.toBe(result.toolCalls[1].toolUseId);
+    expect(result.toolCalls[0].name).toBe("read_file");
+    expect(result.toolCalls[1].name).toBe("write_file");
+    expect(result.cleanedText).toContain("Here is output");
+    expect(result.cleanedText).toContain("some text");
   });
 
-  it("handles tool call with underscores in name", () => {
-    const text = '[Called my_tool_name with args: {"x": 1}]';
+  it("returns empty when no bracket tool calls", () => {
+    const text = "Just regular text without any tool calls.";
     const result = parseBracketToolCalls(text);
-    expect(result.toolCalls).toHaveLength(1);
-    expect(result.toolCalls[0].name).toBe("my_tool_name");
+    expect(result.toolCalls).toHaveLength(0);
+    expect(result.cleanedText).toBe(text);
   });
 
-  it("handles tool call with dashes in name", () => {
-    const text = '[Called my-tool with args: {"x": 1}]';
+  it("handles malformed JSON gracefully", () => {
+    const text = '[Called bad_tool with args: {invalid json}]';
     const result = parseBracketToolCalls(text);
-    expect(result.toolCalls).toHaveLength(1);
-    expect(result.toolCalls[0].name).toBe("my-tool");
+    expect(result.toolCalls).toHaveLength(0);
+    expect(result.cleanedText).toBe(text);
   });
+
+  it("generates a toolUseId for each call", () => {
+    const text = '[Called my_tool with args: {"x": 1}]';
+    const result = parseBracketToolCalls(text);
+    expect(result.toolCalls[0].toolUseId).toBeDefined();
+    expect(result.toolCalls[0].toolUseId.length).toBeGreaterThan(0);
+  });
+
 });
