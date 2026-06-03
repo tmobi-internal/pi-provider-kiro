@@ -2470,3 +2470,53 @@ describe("Feature 9: web_search tool injection", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("thinking budget alignment with pi-ai", () => {
+  beforeEach(() => {
+    resetProfileArnCache(true);
+  });
+
+  function getBudgetFromBody(mockFetch: ReturnType<typeof vi.fn>): number {
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const content: string = body.conversationState.currentMessage.userInputMessage.content;
+    const match = content.match(/<max_thinking_length>(\d+)<\/max_thinking_length>/);
+    return match ? Number(match[1]) : -1;
+  }
+
+  it.each([
+    ["minimal", 1024],
+    ["low", 2048],
+    ["medium", 8192],
+    ["high", 16384],
+    ["xhigh", 16384],
+  ] as const)("reasoning=%s → budget=%d", async (level, expected) => {
+    const mockFetch = mockFetchOk('{"contentBlockText":"hi"}{"contextUsagePercentage":10}');
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel({ reasoning: true }), makeContext(), {
+      apiKey: "tok",
+      reasoning: level,
+    });
+    await collect(stream);
+
+    expect(getBudgetFromBody(mockFetch)).toBe(expected);
+
+    vi.unstubAllGlobals();
+  });
+
+  it("does not inject thinking tags when reasoning is disabled", async () => {
+    const mockFetch = mockFetchOk('{"contentBlockText":"hi"}{"contextUsagePercentage":10}');
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel({ reasoning: false }), makeContext(), {
+      apiKey: "tok",
+    });
+    await collect(stream);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const content: string = body.conversationState.currentMessage.userInputMessage.content;
+    expect(content).not.toContain("max_thinking_length");
+
+    vi.unstubAllGlobals();
+  });
+});
