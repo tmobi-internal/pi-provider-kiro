@@ -309,12 +309,14 @@ export function streamKiro(
       if (thinkingEnabled) {
         const budget =
           options?.reasoning === "xhigh"
-            ? 50000
+            ? 16384
             : options?.reasoning === "high"
-              ? 30000
+              ? 16384
               : options?.reasoning === "medium"
-                ? 20000
-                : 10000;
+                ? 8192
+                : options?.reasoning === "low"
+                  ? 2048
+                  : 1024;
         systemPrompt = `<thinking_mode>enabled</thinking_mode><max_thinking_length>${budget}</max_thinking_length>${systemPrompt ? `\n${systemPrompt}` : ""}`;
       }
       let retryCount = 0;
