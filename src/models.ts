@@ -86,11 +86,55 @@ const FALLBACK_MODEL_IDS = [
   "auto",
 ];
 
-// --- CLI fetch + cache ---
+// --- API fetch + cache ---
+
+interface ApiModel {
+  modelId: string;
+  modelName?: string;
+  tokenLimits?: { maxInputTokens?: number; maxOutputTokens?: number };
+  additionalModelRequestFieldsSchema?: { properties?: { thinking?: unknown } } | null;
+  supportedInputTypes?: string[];
+}
 
 interface CacheFile {
-  models: string[];
+  models: ApiModel[];
   timestamp: number;
+  apiRegion?: string;
+}
+
+const CACHE_TTL = 24 * 60 * 60 * 1000;
+
+function readCacheFile(): CacheFile | null {
+  try {
+    if (!existsSync(CACHE_PATH)) return null;
+    const data = JSON.parse(readFileSync(CACHE_PATH, "utf-8")) as CacheFile;
+    if (!data.models?.length) return null;
+
+    // Legacy format (string[]) — discard
+    if (typeof data.models[0] === "string") return null;
+
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function isCacheStale(cache: CacheFile): boolean {
+  return Date.now() - cache.timestamp > CACHE_TTL;
+}
+
+function isCacheFreshForRegion(cache: CacheFile, apiRegion: string): boolean {
+  return !isCacheStale(cache) && cache.apiRegion === apiRegion;
+}
+
+function saveCache(models: ApiModel[], apiRegion: string): void {
+  try {
+    const dir = dirname(CACHE_PATH);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(CACHE_PATH, JSON.stringify({ models, timestamp: Date.now(), apiRegion } satisfies CacheFile));
+  } catch {
+    // Non-fatal
+  }
 }
 
 type KiroCliModel = { model_id: string };
@@ -105,49 +149,85 @@ function fetchKiroCliModels(): string[] | null {
 
     const data = JSON.parse(out) as { models: KiroCliModel[] };
     const ids = (data.models ?? []).map((m) => m.model_id.replace(/(\d)\.(\d)/g, "$1-$2"));
-
-    if (ids.length > 0) {
-      saveCache(ids);
-      return ids;
-    }
-
-    return null;
+    return ids.length > 0 ? ids : null;
   } catch {
     return null;
   }
 }
 
-function saveCache(ids: string[]): void {
+export async function refreshModelsCache(accessToken: string, region: string): Promise<void> {
   try {
-    const dir = dirname(CACHE_PATH);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(CACHE_PATH, JSON.stringify({ models: ids, timestamp: Date.now() } satisfies CacheFile));
+    const apiRegion = resolveApiRegion(region);
+    const cache = readCacheFile();
+
+    if (cache && isCacheFreshForRegion(cache, apiRegion)) return;
+
+    const url = `https://q.${apiRegion}.amazonaws.com/ListAvailableModels?origin=AI_EDITOR`;
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!response.ok) return;
+
+    const data = (await response.json()) as { models?: ApiModel[] };
+    const models = data.models ?? [];
+
+    if (models.length > 0) {
+      saveCache(models, apiRegion);
+      const refreshed = models.map(buildModelFromApi);
+
+      if (cachedModels) {
+        cachedModels.splice(0, cachedModels.length, ...refreshed);
+      } else {
+        cachedModels = refreshed;
+      }
+    }
   } catch {
     // Non-fatal
   }
 }
 
-function readCache(): string[] | null {
-  try {
-    if (!existsSync(CACHE_PATH)) return null;
-    const data = JSON.parse(readFileSync(CACHE_PATH, "utf-8")) as CacheFile;
-    if (data.models?.length > 0) return data.models;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 // --- Model resolution cascade ---
 
-function resolveModelIds(): string[] {
-  return fetchKiroCliModels() ?? readCache() ?? FALLBACK_MODEL_IDS;
+function resolveModels(): ReturnType<typeof buildModelFromApi>[] {
+  const cache = readCacheFile();
+
+  if (cache?.models) {
+    return cache.models.map(buildModelFromApi);
+  }
+
+  const ids = fetchKiroCliModels() ?? FALLBACK_MODEL_IDS;
+  return ids.map(buildModelFromMeta);
 }
 
-function buildModel(piId: string) {
+function buildModelFromApi(m: ApiModel) {
+  const piId = m.modelId.replace(/(\d)\.(\d)/g, "$1-$2");
   const meta = MODEL_METADATA[piId];
+  const hasThinking = !!m.additionalModelRequestFieldsSchema?.properties?.thinking;
+  const inputTypes = (m.supportedInputTypes ?? [])
+    .map((t) => t.toLowerCase())
+    .filter((t): t is "text" | "image" => t === "text" || t === "image");
 
-  // Default name: capitalize and format the ID
+  return {
+    id: piId,
+    name: m.modelName ?? meta?.name ?? piId.split("-").map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(" "),
+    api: "kiro-api" as const,
+    provider: "kiro" as const,
+    baseUrl: BASE_URL,
+    reasoning: piId === "auto" ? true : hasThinking,
+    input: inputTypes.length > 0 ? inputTypes : (meta?.input ?? ["text"]) as ("text" | "image")[],
+    cost: ZERO_COST,
+    contextWindow: m.tokenLimits?.maxInputTokens ?? meta?.contextWindow ?? 200000,
+    maxTokens: m.tokenLimits?.maxOutputTokens ?? meta?.maxTokens ?? 64000,
+    ...(meta?.thinkingLevelMap && { thinkingLevelMap: meta.thinkingLevelMap }),
+    ...(meta?.firstTokenTimeout && { firstTokenTimeout: meta.firstTokenTimeout }),
+  };
+}
+
+function buildModelFromMeta(piId: string) {
+  const meta = MODEL_METADATA[piId];
   const name = meta?.name ?? piId.split("-").map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
 
   return {
@@ -168,12 +248,11 @@ function buildModel(piId: string) {
 
 // --- Public API ---
 
-let cachedModels: ReturnType<typeof buildModel>[] | null = null;
+let cachedModels: ReturnType<typeof buildModelFromMeta>[] | null = null;
 
 export function getKiroModels() {
   if (cachedModels) return cachedModels;
-  const ids = resolveModelIds();
-  cachedModels = ids.map(buildModel);
+  cachedModels = resolveModels();
   return cachedModels;
 }
 
