@@ -384,3 +384,78 @@ describe("Feature 7: Thinking Tag Parser", () => {
     expect(events.map((e) => e.type)).toContain("thinking_end");
   });
 });
+
+describe("Feature 7: Close tag false-positive defense", () => {
+  // 백틱으로 감싸진 close tag는 진짜 종료가 아니다
+
+  it("ignores close tag wrapped in backticks inside thinking", async () => {
+    const events = await run([
+      "<thinking>The parser uses `</thinking>` to detect end\n\nreal reasoning</thinking>\n\nHello",
+    ]);
+    expect(deltas(events, "thinking_delta")).toBe(
+      "The parser uses `</thinking>` to detect end\n\nreal reasoning",
+    );
+    expect(deltas(events, "text_delta")).toBe("Hello");
+  });
+
+
+  it("handles multiple quoted close tags in thinking", async () => {
+    const events = await run([
+      "<thinking>`</thinking>` and `</thinking>` both fake\nreal</thinking>\n\nText",
+    ]);
+    expect(deltas(events, "thinking_delta")).toBe(
+      "`</thinking>` and `</thinking>` both fake\nreal",
+    );
+    expect(deltas(events, "text_delta")).toBe("Text");
+  });
+
+  it("does NOT skip unquoted close tag (real close)", async () => {
+    const events = await run(["<thinking>done</thinking>\n\nResult"]);
+    expect(deltas(events, "thinking_delta")).toBe("done");
+    expect(deltas(events, "text_delta")).toBe("Result");
+  });
+
+  it("handles quoted close tag split across chunks", async () => {
+    const events = await run([
+      "<thinking>uses `</thi",
+      "nking>` to end\nactual reasoning</thinking>\n\nHi",
+    ]);
+    expect(deltas(events, "thinking_delta")).toBe(
+      "uses `</thinking>` to end\nactual reasoning",
+    );
+    expect(deltas(events, "text_delta")).toBe("Hi");
+  });
+
+  it("handles quoted close tag where closing quote arrives in next chunk", async () => {
+    const events = await run([
+      "<thinking>uses `</thinking>",
+      "` as text\nreal</thinking>\n\nHi",
+    ]);
+    expect(deltas(events, "thinking_delta")).toBe(
+      "uses `</thinking>` as text\nreal",
+    );
+    expect(deltas(events, "text_delta")).toBe("Hi");
+  });
+
+  it("finalize handles quoted close tag (no real close)", async () => {
+    const events = await run(["<thinking>mentions `</thinking>` but never closes"]);
+    // No real close tag — finalize captures all as thinking
+    expect(deltas(events, "thinking_delta")).toBe(
+      "mentions `</thinking>` but never closes",
+    );
+    expect(events.map((e) => e.type)).toContain("thinking_end");
+  });
+
+  it("handles token-by-token streaming where backtick and close tag arrive separately", async () => {
+    const events = await run([
+      "<thinking>wrap ",
+      "`",
+      "</thinking>",
+      "` in backticks\nreal thinking</thinking>\n\nHello",
+    ]);
+    expect(deltas(events, "thinking_delta")).toBe(
+      "wrap `</thinking>` in backticks\nreal thinking",
+    );
+    expect(deltas(events, "text_delta")).toBe("Hello");
+  });
+});
