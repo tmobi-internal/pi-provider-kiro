@@ -68,32 +68,84 @@ describe("Feature 7: Thinking Tag Parser", () => {
   });
 
   // =========================================================================
-  // 버퍼링: processChunk에서는 emit하지 않고 finalize에서 일괄 발행
+  // 스트리밍: processChunk에서 즉시 이벤트 발행
   // =========================================================================
 
-  it("does not emit events until finalize is called", () => {
+  it("emits thinking_delta during processChunk (not waiting for finalize)", () => {
     const output = makeOutput();
     const stream = createAssistantMessageEventStream();
     const parser = new ThinkingTagParser(output, stream);
 
-    parser.processChunk("Hello world");
+    parser.processChunk("<thinking>hello ");
+    parser.processChunk("world");
 
-    // 버퍼링 중이므로 아직 content가 비어있어야 함
+    // finalize 전이지만 thinking이 이미 content에 누적되어야 함
+    expect(output.content[0]?.type).toBe("thinking");
+    expect((output.content[0] as { thinking: string }).thinking).toContain("hello ");
+  });
+
+  it("emits text_delta after thinking close tag during processChunk", () => {
+    const output = makeOutput();
+    const stream = createAssistantMessageEventStream();
+    const parser = new ThinkingTagParser(output, stream);
+
+    parser.processChunk("<thinking>reasoning</thinking>\n\nHello ");
+    parser.processChunk("world");
+
+    // finalize 전이지만 text가 이미 content에 누적되어야 함
+    expect(output.content[1]?.type).toBe("text");
+    expect((output.content[1] as { text: string }).text).toContain("Hello ");
+  });
+
+  it("streams text immediately when no thinking tag found", () => {
+    const output = makeOutput();
+    const stream = createAssistantMessageEventStream();
+    const parser = new ThinkingTagParser(output, stream);
+
+    // 충분히 긴 텍스트 — 태그 존재 불가능 확정
+    parser.processChunk("This is plain text without any tags");
+
+    // finalize 전이지만 text가 content에 있어야 함
+    expect(output.content[0]?.type).toBe("text");
+    expect((output.content[0] as { text: string }).text).toContain("This is plain text");
+  });
+
+  it("streams text containing non-thinking '<' immediately", () => {
+    const output = makeOutput();
+    const stream = createAssistantMessageEventStream();
+    const parser = new ThinkingTagParser(output, stream);
+
+    parser.processChunk("Hello <b>world</b> text");
+
+    // '<b>' is not a thinking tag — should stream immediately
+    expect(output.content[0]?.type).toBe("text");
+    expect((output.content[0] as { text: string }).text).toContain("Hello <b>world</b>");
+  });
+
+  it("buffers short initial chunk that could be start of tag", () => {
+    const output = makeOutput();
+    const stream = createAssistantMessageEventStream();
+    const parser = new ThinkingTagParser(output, stream);
+
+    parser.processChunk("<th");
+
+    // 아직 태그인지 판별 불가 — content가 비어있어야 함
     expect(output.content).toHaveLength(0);
   });
 
-  it("emits all events on finalize for plain text", () => {
+  it("holds back potential close tag prefix at chunk boundary", () => {
     const output = makeOutput();
     const stream = createAssistantMessageEventStream();
     const parser = new ThinkingTagParser(output, stream);
 
-    parser.processChunk("Hello world");
-    parser.finalize();
+    parser.processChunk("<thinking>reasoning</thi");
 
-    expect(output.content[0]?.type).toBe("text");
-    expect(output.content[0]?.type === "text" && output.content[0].text).toBe("Hello world");
+    // '</thi'는 닫기 태그 후보이므로 홀드
+    expect(output.content[0]?.type).toBe("thinking");
+    const thinking = (output.content[0] as { thinking: string }).thinking;
+    expect(thinking).toBe("reasoning");
+    expect(thinking).not.toContain("</thi");
   });
-
   // =========================================================================
   // 인덱스 일관성: 발행된 이벤트의 contentIndex와 content 배열 위치 일치
   // =========================================================================
@@ -130,21 +182,17 @@ describe("Feature 7: Thinking Tag Parser", () => {
     const events: AssistantMessageEvent[] = [];
     for await (const e of stream) events.push(e);
 
-    // thinking이 content[0], text가 content[1]
+    // thinking이 content[0], text가 content[1] (restructure 후 최종 상태)
     expect(output.content[0]?.type).toBe("thinking");
     expect(output.content[1]?.type).toBe("text");
 
-    // 모든 이벤트의 contentIndex가 실제 배열 위치와 일치
+    // thinking 이벤트는 항상 contentIndex=0
     for (const event of events) {
       if ("contentIndex" in event && event.contentIndex !== undefined) {
         const idx = event.contentIndex as number;
 
         if (event.type === "thinking_start" || event.type === "thinking_delta" || event.type === "thinking_end") {
           expect(idx).toBe(0);
-        }
-
-        if (event.type === "text_start" || event.type === "text_delta") {
-          expect(idx).toBe(1);
         }
       }
     }
@@ -203,6 +251,39 @@ describe("Feature 7: Thinking Tag Parser", () => {
     const events = await run(["<think>idea</th", "ink>\n\nText"]);
     expect(events.map((e) => e.type)).toContain("thinking_end");
     expect(deltas(events, "text_delta")).toContain("Text");
+  });
+
+  // =========================================================================
+  // 태그 변형: 어레이 순서대로 첫 번째 변형이 아닌 가장 앞에 위치한 변형 선택
+  // =========================================================================
+
+  it("picks the earliest tag variant by position, not array order", async () => {
+    // <thought> appears before <thinking> in the content
+    const events = await run(["<thought>first</thought>\n\n<thinking>second</thinking>"]);
+    expect(deltas(events, "thinking_delta")).toBe("first");
+    expect(deltas(events, "text_delta")).toContain("<thinking>second</thinking>");
+  });
+
+  // =========================================================================
+  // restructure: 스트리밍 중 텍스트 유지
+  // =========================================================================
+
+  it("preserves previously streamed text after restructure (before finalize)", () => {
+    const output = makeOutput();
+    const stream = createAssistantMessageEventStream();
+    const parser = new ThinkingTagParser(output, stream);
+
+    // text streams first
+    parser.processChunk("This is plain text without any tags");
+    expect(output.content[0]?.type).toBe("text");
+
+    // thinking tag arrives — triggers restructure
+    parser.processChunk("<thinking>reasoning</thinking>");
+
+    // text should still be visible at index 1 immediately (no flicker)
+    expect(output.content[0]?.type).toBe("thinking");
+    expect(output.content[1]?.type).toBe("text");
+    expect((output.content[1] as { text: string }).text).toContain("This is plain text");
   });
 
   // =========================================================================

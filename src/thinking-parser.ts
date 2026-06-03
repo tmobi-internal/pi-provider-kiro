@@ -1,5 +1,5 @@
-// ABOUTME: Stateful parser for thinking tags in streaming content.
-// ABOUTME: Buffers all content, then separates thinking blocks from text on finalize.
+// ABOUTME: Stateful streaming parser for thinking tags.
+// ABOUTME: Emits events during processChunk; pi re-renders from output.content on each event.
 
 import type {
   AssistantMessage,
@@ -11,7 +11,6 @@ import type {
 export const THINKING_START_TAG = "<thinking>";
 export const THINKING_END_TAG = "</thinking>";
 
-// All recognized thinking tag variants and their corresponding close tags
 const THINKING_TAG_VARIANTS: Array<{ open: string; close: string }> = [
   { open: "<thinking>", close: "</thinking>" },
   { open: "<think>", close: "</think>" },
@@ -19,9 +18,54 @@ const THINKING_TAG_VARIANTS: Array<{ open: string; close: string }> = [
   { open: "<thought>", close: "</thought>" },
 ];
 
+const MAX_OPEN_TAG_LENGTH = Math.max(...THINKING_TAG_VARIANTS.map((v) => v.open.length));
+
+type State = "PENDING" | "IN_THINKING" | "STREAMING_TEXT";
+
+interface TagMatch {
+  pos: number;
+  variant: (typeof THINKING_TAG_VARIANTS)[number];
+}
+
+function findEarliestOpeningTag(text: string): TagMatch | null {
+  let best: TagMatch | null = null;
+
+  for (const variant of THINKING_TAG_VARIANTS) {
+    const pos = text.indexOf(variant.open);
+
+    if (pos !== -1 && (best === null || pos < best.pos)) {
+      best = { pos, variant };
+    }
+  }
+
+  return best;
+}
+
+function getTrailingPrefixLength(text: string, tags: string[]): number {
+  let max = 0;
+
+  for (const tag of tags) {
+    const limit = Math.min(text.length, tag.length - 1);
+
+    for (let len = limit; len > 0; len--) {
+      if (text.endsWith(tag.slice(0, len))) {
+        max = Math.max(max, len);
+        break;
+      }
+    }
+  }
+
+  return max;
+}
+
 export class ThinkingTagParser {
+  private state: State = "PENDING";
   private buffer = "";
+  private activeCloseTag = "";
+  private thinkingBlockIndex: number | null = null;
   private textBlockIndex: number | null = null;
+  private textBefore = "";
+  private thinkingDone = false;
 
   constructor(
     private output: AssistantMessage,
@@ -30,19 +74,35 @@ export class ThinkingTagParser {
 
   processChunk(chunk: string): void {
     this.buffer += chunk;
+
+    switch (this.state) {
+      case "PENDING":
+        this.processPending();
+        break;
+
+      case "IN_THINKING":
+        this.processInThinking();
+        break;
+
+      case "STREAMING_TEXT":
+        this.processStreamingText();
+        break;
+    }
   }
 
   finalize(): void {
-    if (this.buffer.length === 0) return;
+    switch (this.state) {
+      case "PENDING":
+        this.finalizePending();
+        break;
 
-    const { thinking, text } = this.parse(this.buffer);
+      case "IN_THINKING":
+        this.finalizeInThinking();
+        break;
 
-    if (thinking) {
-      this.emitThinking(thinking);
-    }
-
-    if (text) {
-      this.emitText(text);
+      case "STREAMING_TEXT":
+        this.finalizeStreamingText();
+        break;
     }
 
     this.buffer = "";
@@ -52,87 +112,243 @@ export class ThinkingTagParser {
     return this.textBlockIndex;
   }
 
-  private parse(content: string): { thinking: string | null; text: string } {
-    // Find the earliest opening tag
-    let bestPos = -1;
-    let bestVariant: (typeof THINKING_TAG_VARIANTS)[number] | null = null;
+  private processPending(): void {
+    const match = findEarliestOpeningTag(this.buffer);
 
-    for (const variant of THINKING_TAG_VARIANTS) {
-      const pos = content.indexOf(variant.open);
+    if (match) {
+      const before = this.buffer.slice(0, match.pos);
+      this.buffer = this.buffer.slice(match.pos + match.variant.open.length);
+      this.activeCloseTag = match.variant.close;
+      this.state = "IN_THINKING";
 
-      if (pos !== -1 && (bestPos === -1 || pos < bestPos)) {
-        bestPos = pos;
-        bestVariant = variant;
+      this.startThinking();
+
+      if (before) {
+        this.textBefore = before;
+      }
+
+      this.processInThinking();
+      return;
+    }
+
+    // No tag found. Check if buffer can still become a thinking tag.
+    if (!this.buffer.includes("<") && this.buffer.length >= MAX_OPEN_TAG_LENGTH) {
+      // No '<' at all — impossible for a tag to appear
+      this.state = "STREAMING_TEXT";
+      this.processStreamingText();
+      return;
+    }
+
+    // Buffer has '<' but no thinking tag. Check if suffix from last '<' is a possible prefix.
+    const lastLt = this.buffer.lastIndexOf("<");
+
+    if (lastLt !== -1) {
+      const suffix = this.buffer.slice(lastLt);
+      const isPossiblePrefix = THINKING_TAG_VARIANTS.some((v) => v.open.startsWith(suffix));
+
+      if (!isPossiblePrefix) {
+        // '<' is not start of any thinking tag — safe to stream all
+        this.state = "STREAMING_TEXT";
+        this.processStreamingText();
+      }
+    }
+  }
+
+  private processInThinking(): void {
+    const closePos = this.buffer.indexOf(this.activeCloseTag);
+
+    if (closePos !== -1) {
+      const thinkingChunk = this.buffer.slice(0, closePos);
+
+      if (thinkingChunk) {
+        this.appendThinking(thinkingChunk);
+      }
+
+      this.endThinking();
+
+      let remaining = this.buffer.slice(closePos + this.activeCloseTag.length);
+
+      if (remaining.startsWith("\n\n")) {
+        remaining = remaining.slice(2);
+      }
+
+      this.buffer = remaining;
+      this.state = "STREAMING_TEXT";
+
+      // Emit buffered text-before (from PENDING path)
+      if (this.textBefore) {
+        this.ensureTextBlock();
+        this.appendText(this.textBefore);
+        this.textBefore = "";
+      }
+
+      if (this.buffer) {
+        this.processStreamingText();
+      }
+
+      return;
+    }
+
+    // Emit safe portion, hold back potential close tag prefix
+    const trailingPrefix = getTrailingPrefixLength(this.buffer, [this.activeCloseTag]);
+    const safeLen = this.buffer.length - trailingPrefix;
+
+    if (safeLen > 0) {
+      this.appendThinking(this.buffer.slice(0, safeLen));
+      this.buffer = this.buffer.slice(safeLen);
+    }
+  }
+
+  private processStreamingText(): void {
+    if (!this.buffer) return;
+
+    // Only look for tags if thinking hasn't been extracted yet
+    if (!this.thinkingDone) {
+      const match = findEarliestOpeningTag(this.buffer);
+
+      if (match) {
+        // Emit text before the tag
+        const before = this.buffer.slice(0, match.pos);
+
+        if (before) {
+          this.ensureTextBlock();
+          this.appendText(before);
+        }
+
+        // Restructure: thinking at index 0, existing text moves to index 1
+        this.restructureForThinking();
+
+        this.buffer = this.buffer.slice(match.pos + match.variant.open.length);
+        this.activeCloseTag = match.variant.close;
+        this.state = "IN_THINKING";
+        this.processInThinking();
+        return;
       }
     }
 
-    if (bestPos === -1 || !bestVariant) {
-      // No thinking tag found — all content is text
-      return { thinking: null, text: content };
+    this.ensureTextBlock();
+    this.appendText(this.buffer);
+    this.buffer = "";
+  }
+
+  private finalizePending(): void {
+    if (!this.buffer) return;
+
+    const match = findEarliestOpeningTag(this.buffer);
+
+    if (!match) {
+      this.ensureTextBlock();
+      this.appendText(this.buffer);
+      return;
     }
 
-    // Extract text before the thinking tag
-    const textBefore = content.slice(0, bestPos);
-
-    // Extract thinking content
-    const afterOpen = content.slice(bestPos + bestVariant.open.length);
-    const closePos = afterOpen.indexOf(bestVariant.close);
+    const before = this.buffer.slice(0, match.pos);
+    const afterOpen = this.buffer.slice(match.pos + match.variant.open.length);
+    const closePos = afterOpen.indexOf(match.variant.close);
 
     let thinkingContent: string;
     let textAfter: string;
 
     if (closePos !== -1) {
-      // Closed thinking block
       thinkingContent = afterOpen.slice(0, closePos);
-      textAfter = afterOpen.slice(closePos + bestVariant.close.length);
+      textAfter = afterOpen.slice(closePos + match.variant.close.length);
 
-      // Strip leading \n\n between thinking and text
       if (textAfter.startsWith("\n\n")) {
         textAfter = textAfter.slice(2);
       }
     } else {
-      // Unclosed thinking block (stream truncated)
       thinkingContent = afterOpen;
       textAfter = "";
     }
 
-    // Combine text before and after thinking
-    const combinedText = textBefore + textAfter;
+    if (thinkingContent) {
+      this.startThinking();
+      this.appendThinking(thinkingContent);
+      this.endThinking();
+    }
 
-    return { thinking: thinkingContent, text: combinedText };
+    const combinedText = before + textAfter;
+
+    if (combinedText) {
+      this.ensureTextBlock();
+      this.appendText(combinedText);
+    }
   }
 
-  private emitThinking(thinking: string): void {
-    const thinkingBlockIndex = this.output.content.length;
+  private finalizeInThinking(): void {
+    if (this.buffer) {
+      this.appendThinking(this.buffer);
+    }
+
+    this.endThinking();
+
+    if (this.textBefore) {
+      this.ensureTextBlock();
+      this.appendText(this.textBefore);
+      this.textBefore = "";
+    }
+  }
+
+  private finalizeStreamingText(): void {
+    if (this.buffer) {
+      this.ensureTextBlock();
+      this.appendText(this.buffer);
+    }
+  }
+
+  private restructureForThinking(): void {
+    // Text is at index 0. Insert thinking at 0, text moves to 1.
+    // pi re-renders from output.content — no flicker.
+    const textBlock = this.output.content[0];
+    this.output.content[0] = { type: "thinking", thinking: "" };
+
+    if (textBlock) {
+      this.output.content[1] = textBlock;
+      this.textBlockIndex = 1;
+    }
+
+    this.thinkingBlockIndex = 0;
+    this.stream.push({ type: "thinking_start", contentIndex: 0, partial: this.output });
+  }
+
+  private startThinking(): void {
+    this.thinkingBlockIndex = this.output.content.length;
     this.output.content.push({ type: "thinking", thinking: "" });
-    this.stream.push({ type: "thinking_start", contentIndex: thinkingBlockIndex, partial: this.output });
-
-    const block = this.output.content[thinkingBlockIndex] as ThinkingContent;
-    block.thinking = thinking;
-    this.stream.push({
-      type: "thinking_delta",
-      contentIndex: thinkingBlockIndex,
-      delta: thinking,
-      partial: this.output,
-    });
-
-    this.stream.push({
-      type: "thinking_end",
-      contentIndex: thinkingBlockIndex,
-      content: thinking,
-      partial: this.output,
-    });
+    this.stream.push({ type: "thinking_start", contentIndex: this.thinkingBlockIndex, partial: this.output });
   }
 
-  private emitText(text: string): void {
-    if (!text) return;
+  private appendThinking(delta: string): void {
+    const idx = this.thinkingBlockIndex;
+    if (idx === null) return;
+
+    const block = this.output.content[idx] as ThinkingContent;
+    block.thinking += delta;
+    this.stream.push({ type: "thinking_delta", contentIndex: idx, delta, partial: this.output });
+  }
+
+  private endThinking(): void {
+    const idx = this.thinkingBlockIndex;
+    if (idx === null) return;
+
+    const block = this.output.content[idx] as ThinkingContent;
+    this.stream.push({ type: "thinking_end", contentIndex: idx, content: block.thinking, partial: this.output });
+    this.thinkingDone = true;
+  }
+
+  private ensureTextBlock(): void {
+    if (this.textBlockIndex !== null) return;
 
     this.textBlockIndex = this.output.content.length;
     this.output.content.push({ type: "text", text: "" });
     this.stream.push({ type: "text_start", contentIndex: this.textBlockIndex, partial: this.output });
+  }
 
-    const block = this.output.content[this.textBlockIndex] as TextContent;
-    block.text = text;
-    this.stream.push({ type: "text_delta", contentIndex: this.textBlockIndex, delta: text, partial: this.output });
+  private appendText(delta: string): void {
+    const idx = this.textBlockIndex;
+    if (idx === null) return;
+
+    const block = this.output.content[idx] as TextContent;
+    block.text += delta;
+    this.stream.push({ type: "text_delta", contentIndex: idx, delta, partial: this.output });
   }
 }
