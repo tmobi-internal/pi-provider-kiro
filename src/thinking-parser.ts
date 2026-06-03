@@ -58,6 +58,39 @@ function getTrailingPrefixLength(text: string, tags: string[]): number {
   return max;
 }
 
+const QUOTE_CHARS = new Set(["`"]);
+
+function findRealCloseTag(text: string, closeTag: string, streaming = false): number {
+  let start = 0;
+
+  while (start < text.length) {
+    const pos = text.indexOf(closeTag, start);
+
+    if (pos === -1) return -1;
+
+    const charBefore = pos > 0 ? text[pos - 1] : "";
+    const endPos = pos + closeTag.length;
+    const charAfter = text[endPos] ?? "";
+
+    if (charBefore && QUOTE_CHARS.has(charBefore)) {
+      if (charAfter === charBefore) {
+        // Confirmed fake — skip
+        start = endPos + 1;
+        continue;
+      }
+
+      if (streaming && endPos >= text.length) {
+        // End of buffer — can't confirm if quote closes. Treat as not found.
+        return -1;
+      }
+    }
+
+    return pos;
+  }
+
+  return -1;
+}
+
 export class ThinkingTagParser {
   private state: State = "PENDING";
   private buffer = "";
@@ -155,7 +188,7 @@ export class ThinkingTagParser {
   }
 
   private processInThinking(): void {
-    const closePos = this.buffer.indexOf(this.activeCloseTag);
+    const closePos = findRealCloseTag(this.buffer, this.activeCloseTag, true);
 
     if (closePos !== -1) {
       const thinkingChunk = this.buffer.slice(0, closePos);
@@ -189,9 +222,16 @@ export class ThinkingTagParser {
       return;
     }
 
-    // Emit safe portion, hold back potential close tag prefix
+    // Emit safe portion, hold back potential close tag prefix + 1 char for quote detection
     const trailingPrefix = getTrailingPrefixLength(this.buffer, [this.activeCloseTag]);
-    const safeLen = this.buffer.length - trailingPrefix;
+    const charBeforePrefix = trailingPrefix > 0 && trailingPrefix < this.buffer.length
+      ? this.buffer[this.buffer.length - trailingPrefix - 1]
+      : "";
+    const lastChar = this.buffer[this.buffer.length - 1] ?? "";
+    const holdExtra = QUOTE_CHARS.has(charBeforePrefix) ? 1
+      : (trailingPrefix === 0 && QUOTE_CHARS.has(lastChar)) ? 1
+      : 0;
+    const safeLen = this.buffer.length - trailingPrefix - holdExtra;
 
     if (safeLen > 0) {
       this.appendThinking(this.buffer.slice(0, safeLen));
@@ -244,7 +284,7 @@ export class ThinkingTagParser {
 
     const before = this.buffer.slice(0, match.pos);
     const afterOpen = this.buffer.slice(match.pos + match.variant.open.length);
-    const closePos = afterOpen.indexOf(match.variant.close);
+    const closePos = findRealCloseTag(afterOpen, match.variant.close);
 
     let thinkingContent: string;
     let textAfter: string;
