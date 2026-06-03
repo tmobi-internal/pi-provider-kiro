@@ -785,14 +785,16 @@ export function streamKiro(
         for (const tc of truncatedToolCalls) {
           saveTruncationWarning(tc.toolUseId, tc.name);
         }
-        const contentText = textBlockIndex !== null ? (output.content[textBlockIndex] as TextContent).text : "";
-        const contentTruncated = !receivedContextUsage && contentText.length > 0 && emittedToolCalls === 0;
-        if (contentTruncated) {
-          saveContentTruncation(contentText);
-        }
         if (thinkingParser) {
           thinkingParser.finalize();
           textBlockIndex = thinkingParser.getTextBlockIndex();
+        }
+
+        const contentText = textBlockIndex !== null ? (output.content[textBlockIndex] as TextContent).text : "";
+        const contentTruncated = !receivedContextUsage && contentText.length > 0 && emittedToolCalls === 0;
+
+        if (contentTruncated) {
+          saveContentTruncation(contentText);
         }
         // Fallback: extract bracket-style tool calls from content if no native tool calls
         if (!sawAnyToolCalls && textBlockIndex !== null) {

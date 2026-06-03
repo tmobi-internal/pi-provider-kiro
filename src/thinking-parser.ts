@@ -1,7 +1,12 @@
 // ABOUTME: Stateful parser for thinking tags in streaming content.
-// ABOUTME: Separates thinking blocks from text, supporting multiple tag variants.
+// ABOUTME: Buffers all content, then separates thinking blocks from text on finalize.
 
-import type { AssistantMessage, AssistantMessageEventStream, TextContent, ThinkingContent } from "@earendil-works/pi-ai";
+import type {
+  AssistantMessage,
+  AssistantMessageEventStream,
+  TextContent,
+  ThinkingContent,
+} from "@earendil-works/pi-ai";
 
 export const THINKING_START_TAG = "<thinking>";
 export const THINKING_END_TAG = "</thinking>";
@@ -14,30 +19,9 @@ const THINKING_TAG_VARIANTS: Array<{ open: string; close: string }> = [
   { open: "<thought>", close: "</thought>" },
 ];
 
-function getTrailingPossibleTagPrefixLength(text: string, tag: string): number {
-  const maxPrefixLength = Math.min(text.length, tag.length - 1);
-  for (let len = maxPrefixLength; len > 0; len--) {
-    if (text.endsWith(tag.slice(0, len))) return len;
-  }
-  return 0;
-}
-
-function getMaxTrailingPossibleTagPrefixLength(text: string, tags: string[]): number {
-  let maxLength = 0;
-  for (const tag of tags) {
-    maxLength = Math.max(maxLength, getTrailingPossibleTagPrefixLength(text, tag));
-  }
-  return maxLength;
-}
-
 export class ThinkingTagParser {
-  private textBuffer = "";
-  private inThinking = false;
-  private thinkingExtracted = false;
-  private thinkingBlockIndex: number | null = null;
+  private buffer = "";
   private textBlockIndex: number | null = null;
-  private lastTextBlockIndex: number | null = null;
-  private activeEndTag: string = THINKING_END_TAG;
 
   constructor(
     private output: AssistantMessage,
@@ -45,151 +29,110 @@ export class ThinkingTagParser {
   ) {}
 
   processChunk(chunk: string): void {
-    this.textBuffer += chunk;
-    while (this.textBuffer.length > 0) {
-      const prevLength = this.textBuffer.length;
-      if (!this.inThinking && !this.thinkingExtracted) {
-        this.processBeforeThinking();
-        if (this.textBuffer.length === 0) break;
-      }
-      if (this.inThinking) {
-        this.processInsideThinking();
-        if (this.textBuffer.length === 0) break;
-      }
-      if (this.thinkingExtracted) {
-        this.processAfterThinking();
-        break;
-      }
-      if (this.textBuffer.length >= prevLength) break;
-    }
+    this.buffer += chunk;
   }
 
   finalize(): void {
-    if (this.textBuffer.length === 0) return;
-    if (this.inThinking && this.thinkingBlockIndex !== null) {
-      const block = this.output.content[this.thinkingBlockIndex] as ThinkingContent;
-      block.thinking += this.textBuffer;
-      this.stream.push({
-        type: "thinking_delta",
-        contentIndex: this.thinkingBlockIndex,
-        delta: this.textBuffer,
-        partial: this.output,
-      });
-      this.stream.push({
-        type: "thinking_end",
-        contentIndex: this.thinkingBlockIndex,
-        content: block.thinking,
-        partial: this.output,
-      });
-    } else {
-      this.emitText(this.textBuffer);
+    if (this.buffer.length === 0) return;
+
+    const { thinking, text } = this.parse(this.buffer);
+
+    if (thinking) {
+      this.emitThinking(thinking);
     }
-    this.textBuffer = "";
+
+    if (text) {
+      this.emitText(text);
+    }
+
+    this.buffer = "";
   }
 
   getTextBlockIndex(): number | null {
-    return this.textBlockIndex ?? this.lastTextBlockIndex;
+    return this.textBlockIndex;
   }
 
-  private processBeforeThinking(): void {
+  private parse(content: string): { thinking: string | null; text: string } {
+    // Find the earliest opening tag
     let bestPos = -1;
     let bestVariant: (typeof THINKING_TAG_VARIANTS)[number] | null = null;
+
     for (const variant of THINKING_TAG_VARIANTS) {
-      const pos = this.textBuffer.indexOf(variant.open);
+      const pos = content.indexOf(variant.open);
+
       if (pos !== -1 && (bestPos === -1 || pos < bestPos)) {
         bestPos = pos;
         bestVariant = variant;
       }
     }
-    if (bestPos !== -1 && bestVariant) {
-      if (bestPos > 0) this.emitText(this.textBuffer.slice(0, bestPos));
-      this.textBuffer = this.textBuffer.slice(bestPos + bestVariant.open.length);
-      this.activeEndTag = bestVariant.close;
-      this.inThinking = true;
-      return;
+
+    if (bestPos === -1 || !bestVariant) {
+      // No thinking tag found — all content is text
+      return { thinking: null, text: content };
     }
 
-    const trailingPrefixLength = getMaxTrailingPossibleTagPrefixLength(
-      this.textBuffer,
-      THINKING_TAG_VARIANTS.map((variant) => variant.open),
-    );
-    const safeLen = this.textBuffer.length - trailingPrefixLength;
-    if (safeLen > 0) {
-      this.emitText(this.textBuffer.slice(0, safeLen));
-      this.textBuffer = this.textBuffer.slice(safeLen);
-    }
-  }
+    // Extract text before the thinking tag
+    const textBefore = content.slice(0, bestPos);
 
-  private processInsideThinking(): void {
-    const endPos = this.textBuffer.indexOf(this.activeEndTag);
-    if (endPos !== -1) {
-      if (endPos > 0) this.emitThinking(this.textBuffer.slice(0, endPos));
-      if (this.thinkingBlockIndex !== null) {
-        const block = this.output.content[this.thinkingBlockIndex] as ThinkingContent;
-        this.stream.push({
-          type: "thinking_end",
-          contentIndex: this.thinkingBlockIndex,
-          content: block.thinking,
-          partial: this.output,
-        });
+    // Extract thinking content
+    const afterOpen = content.slice(bestPos + bestVariant.open.length);
+    const closePos = afterOpen.indexOf(bestVariant.close);
+
+    let thinkingContent: string;
+    let textAfter: string;
+
+    if (closePos !== -1) {
+      // Closed thinking block
+      thinkingContent = afterOpen.slice(0, closePos);
+      textAfter = afterOpen.slice(closePos + bestVariant.close.length);
+
+      // Strip leading \n\n between thinking and text
+      if (textAfter.startsWith("\n\n")) {
+        textAfter = textAfter.slice(2);
       }
-      this.textBuffer = this.textBuffer.slice(endPos + this.activeEndTag.length);
-      this.inThinking = false;
-      this.thinkingExtracted = true;
-      this.lastTextBlockIndex = this.textBlockIndex;
-      this.textBlockIndex = null;
-      if (this.textBuffer.startsWith("\n\n")) this.textBuffer = this.textBuffer.slice(2);
-      return;
+    } else {
+      // Unclosed thinking block (stream truncated)
+      thinkingContent = afterOpen;
+      textAfter = "";
     }
 
-    const trailingPrefixLength = getTrailingPossibleTagPrefixLength(this.textBuffer, this.activeEndTag);
-    const safeLen = this.textBuffer.length - trailingPrefixLength;
-    if (safeLen > 0) {
-      this.emitThinking(this.textBuffer.slice(0, safeLen));
-      this.textBuffer = this.textBuffer.slice(safeLen);
-    }
+    // Combine text before and after thinking
+    const combinedText = textBefore + textAfter;
+
+    return { thinking: thinkingContent, text: combinedText };
   }
 
-  private processAfterThinking(): void {
-    this.emitText(this.textBuffer);
-    this.textBuffer = "";
+  private emitThinking(thinking: string): void {
+    const thinkingBlockIndex = this.output.content.length;
+    this.output.content.push({ type: "thinking", thinking: "" });
+    this.stream.push({ type: "thinking_start", contentIndex: thinkingBlockIndex, partial: this.output });
+
+    const block = this.output.content[thinkingBlockIndex] as ThinkingContent;
+    block.thinking = thinking;
+    this.stream.push({
+      type: "thinking_delta",
+      contentIndex: thinkingBlockIndex,
+      delta: thinking,
+      partial: this.output,
+    });
+
+    this.stream.push({
+      type: "thinking_end",
+      contentIndex: thinkingBlockIndex,
+      content: thinking,
+      partial: this.output,
+    });
   }
 
   private emitText(text: string): void {
     if (!text) return;
-    if (this.textBlockIndex === null) {
-      this.textBlockIndex = this.output.content.length;
-      this.output.content.push({ type: "text", text: "" });
-      this.stream.push({ type: "text_start", contentIndex: this.textBlockIndex, partial: this.output });
-    }
-    const block = this.output.content[this.textBlockIndex] as TextContent;
-    block.text += text;
-    this.stream.push({ type: "text_delta", contentIndex: this.textBlockIndex, delta: text, partial: this.output });
-  }
 
-  private emitThinking(thinking: string): void {
-    if (!thinking) return;
-    if (this.thinkingBlockIndex === null) {
-      if (this.textBlockIndex !== null) {
-        // Thinking arrived after text was already emitted (Kiro API sends
-        // text before thinking content). Insert the thinking block before
-        // the text block so the content array order is thinking → text.
-        this.thinkingBlockIndex = this.textBlockIndex;
-        this.output.content.splice(this.thinkingBlockIndex, 0, { type: "thinking", thinking: "" });
-        this.textBlockIndex = this.textBlockIndex + 1;
-      } else {
-        this.thinkingBlockIndex = this.output.content.length;
-        this.output.content.push({ type: "thinking", thinking: "" });
-      }
-      this.stream.push({ type: "thinking_start", contentIndex: this.thinkingBlockIndex, partial: this.output });
-    }
-    const block = this.output.content[this.thinkingBlockIndex] as ThinkingContent;
-    block.thinking += thinking;
-    this.stream.push({
-      type: "thinking_delta",
-      contentIndex: this.thinkingBlockIndex,
-      delta: thinking,
-      partial: this.output,
-    });
+    this.textBlockIndex = this.output.content.length;
+    this.output.content.push({ type: "text", text: "" });
+    this.stream.push({ type: "text_start", contentIndex: this.textBlockIndex, partial: this.output });
+
+    const block = this.output.content[this.textBlockIndex] as TextContent;
+    block.text = text;
+    this.stream.push({ type: "text_delta", contentIndex: this.textBlockIndex, delta: text, partial: this.output });
   }
 }
