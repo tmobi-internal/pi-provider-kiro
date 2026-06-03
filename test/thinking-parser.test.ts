@@ -43,6 +43,10 @@ function deltas(events: AssistantMessageEvent[], type: string): string {
 }
 
 describe("Feature 7: Thinking Tag Parser", () => {
+  // =========================================================================
+  // 기본 파싱: thinking + text 분리
+  // =========================================================================
+
   it("emits thinking then text for content with thinking block", async () => {
     const events = await run(["<thinking>Let me think</thinking>\n\nAnswer"]);
     const types = events.map((e) => e.type);
@@ -58,35 +62,97 @@ describe("Feature 7: Thinking Tag Parser", () => {
     expect(deltas(events, "text_delta")).toBe("Just plain text");
   });
 
-  it("flushes plain text immediately without waiting for finalize", () => {
+  it("strips double newline between thinking and text", async () => {
+    const events = await run(["<thinking>t</thinking>\n\nAnswer"]);
+    expect(deltas(events, "text_delta")).toBe("Answer");
+  });
+
+  // =========================================================================
+  // 버퍼링: processChunk에서는 emit하지 않고 finalize에서 일괄 발행
+  // =========================================================================
+
+  it("does not emit events until finalize is called", () => {
     const output = makeOutput();
     const stream = createAssistantMessageEventStream();
     const parser = new ThinkingTagParser(output, stream);
 
     parser.processChunk("Hello world");
 
-    expect(output.content[0]?.type).toBe("text");
-    expect(output.content[0]?.type === "text" && output.content[0].text).toBe("Hello world");
+    // 버퍼링 중이므로 아직 content가 비어있어야 함
+    expect(output.content).toHaveLength(0);
   });
 
-  it("retains only a trailing possible opening-tag prefix between chunks", () => {
+  it("emits all events on finalize for plain text", () => {
     const output = makeOutput();
     const stream = createAssistantMessageEventStream();
     const parser = new ThinkingTagParser(output, stream);
 
-    parser.processChunk("Hello <thin");
-
-    expect(output.content[0]?.type).toBe("text");
-    expect(output.content[0]?.type === "text" && output.content[0].text).toBe("Hello ");
-
-    parser.processChunk("king>deep thought</thinking>");
+    parser.processChunk("Hello world");
     parser.finalize();
 
-    // Thinking block inserted before text block
-    expect(output.content[0]?.type).toBe("thinking");
-    expect(output.content[0]?.type === "thinking" && output.content[0].thinking).toBe("deep thought");
-    expect(output.content[1]?.type === "text" && output.content[1].text).toBe("Hello ");
+    expect(output.content[0]?.type).toBe("text");
+    expect(output.content[0]?.type === "text" && output.content[0].text).toBe("Hello world");
   });
+
+  // =========================================================================
+  // 인덱스 일관성: 발행된 이벤트의 contentIndex와 content 배열 위치 일치
+  // =========================================================================
+
+  it("contentIndex in events matches actual content array position", async () => {
+    const events = await run(["<thinking>reasoning</thinking>\n\nAnswer"]);
+
+    for (const event of events) {
+      if ("contentIndex" in event && event.contentIndex !== undefined) {
+        const idx = event.contentIndex as number;
+        expect(idx).toBeLessThan(2); // thinking(0) + text(1)
+
+        if (event.type === "thinking_start" || event.type === "thinking_delta" || event.type === "thinking_end") {
+          expect(idx).toBe(0);
+        }
+
+        if (event.type === "text_start" || event.type === "text_delta") {
+          expect(idx).toBe(1);
+        }
+      }
+    }
+  });
+
+  it("contentIndex consistent when text arrives before thinking", async () => {
+    const output = makeOutput();
+    const stream = createAssistantMessageEventStream();
+    const parser = new ThinkingTagParser(output, stream);
+
+    parser.processChunk("Hello world");
+    parser.processChunk("<thinking>reasoning</thinking>");
+    parser.finalize();
+    stream.end();
+
+    const events: AssistantMessageEvent[] = [];
+    for await (const e of stream) events.push(e);
+
+    // thinking이 content[0], text가 content[1]
+    expect(output.content[0]?.type).toBe("thinking");
+    expect(output.content[1]?.type).toBe("text");
+
+    // 모든 이벤트의 contentIndex가 실제 배열 위치와 일치
+    for (const event of events) {
+      if ("contentIndex" in event && event.contentIndex !== undefined) {
+        const idx = event.contentIndex as number;
+
+        if (event.type === "thinking_start" || event.type === "thinking_delta" || event.type === "thinking_end") {
+          expect(idx).toBe(0);
+        }
+
+        if (event.type === "text_start" || event.type === "text_delta") {
+          expect(idx).toBe(1);
+        }
+      }
+    }
+  });
+
+  // =========================================================================
+  // 청크 분할: 태그가 잘려서 오는 경우
+  // =========================================================================
 
   it("detects thinking start tag split across chunks", async () => {
     const events = await run(["<thin", "king>deep thought</thinking>"]);
@@ -99,12 +165,88 @@ describe("Feature 7: Thinking Tag Parser", () => {
     expect(deltas(events, "text_delta")).toContain("Answer");
   });
 
-  it("strips double newline between thinking and text", async () => {
-    const events = await run(["<thinking>t</thinking>\n\nAnswer"]);
-    expect(deltas(events, "text_delta")).toBe("Answer");
+  // =========================================================================
+  // 태그 변형 지원
+  // =========================================================================
+
+  it("recognizes <think> tags", async () => {
+    const events = await run(["<think>Let me think</think>\n\nAnswer"]);
+    expect(deltas(events, "thinking_delta")).toContain("Let me think");
+    expect(deltas(events, "text_delta")).toContain("Answer");
   });
 
-  it("getTextBlockIndex returns null before text emitted", () => {
+  it("recognizes <reasoning> tags", async () => {
+    const events = await run(["<reasoning>Step by step</reasoning>\n\nResult"]);
+    expect(deltas(events, "thinking_delta")).toContain("Step by step");
+    expect(deltas(events, "text_delta")).toContain("Result");
+  });
+
+  it("recognizes <thought> tags", async () => {
+    const events = await run(["<thought>Hmm</thought>\n\nDone"]);
+    expect(deltas(events, "thinking_delta")).toContain("Hmm");
+    expect(deltas(events, "text_delta")).toContain("Done");
+  });
+
+  it("handles <think> split across chunks", async () => {
+    const events = await run(["<thi", "nk>deep thought</think>\n\nText"]);
+    expect(deltas(events, "thinking_delta")).toContain("deep thought");
+    expect(deltas(events, "text_delta")).toContain("Text");
+  });
+
+  it("handles <reasoning> split across chunks", async () => {
+    const events = await run(["<reason", "ing>logic</reasoning>\n\nOutput"]);
+    expect(deltas(events, "thinking_delta")).toContain("logic");
+    expect(deltas(events, "text_delta")).toContain("Output");
+  });
+
+  it("handles close tag split across chunks for <think>", async () => {
+    const events = await run(["<think>idea</th", "ink>\n\nText"]);
+    expect(events.map((e) => e.type)).toContain("thinking_end");
+    expect(deltas(events, "text_delta")).toContain("Text");
+  });
+
+  // =========================================================================
+  // text-before-thinking (Kiro API가 text를 먼저 보내는 경우)
+  // =========================================================================
+
+  it("correctly separates when text arrives before thinking", async () => {
+    const output = makeOutput();
+    const stream = createAssistantMessageEventStream();
+    const parser = new ThinkingTagParser(output, stream);
+
+    parser.processChunk("Hello world");
+    parser.processChunk("<thinking>reasoning</thinking>");
+    parser.finalize();
+    stream.end();
+
+    expect(output.content[0]?.type).toBe("thinking");
+    expect(output.content[1]?.type).toBe("text");
+    expect((output.content[0] as { thinking: string }).thinking).toBe("reasoning");
+    expect((output.content[1] as { text: string }).text).toBe("Hello world");
+  });
+
+  it("handles text-before-thinking across multiple chunks", async () => {
+    const output = makeOutput();
+    const stream = createAssistantMessageEventStream();
+    const parser = new ThinkingTagParser(output, stream);
+
+    parser.processChunk("Hey! ");
+    parser.processChunk("What can I help with?");
+    parser.processChunk("<thinking>Let me think about this</thinking>");
+    parser.finalize();
+    stream.end();
+
+    expect(output.content[0]?.type).toBe("thinking");
+    expect(output.content[1]?.type).toBe("text");
+    expect((output.content[0] as { thinking: string }).thinking).toBe("Let me think about this");
+    expect((output.content[1] as { text: string }).text).toBe("Hey! What can I help with?");
+  });
+
+  // =========================================================================
+  // getTextBlockIndex
+  // =========================================================================
+
+  it("getTextBlockIndex returns null before finalize", () => {
     const output = makeOutput();
     const stream = createAssistantMessageEventStream();
     const parser = new ThinkingTagParser(output, stream);
@@ -129,104 +271,35 @@ describe("Feature 7: Thinking Tag Parser", () => {
     expect(parser.getTextBlockIndex()).toBe(1);
   });
 
-  // =========================================================================
-  // Additional thinking tag variants (Task 2.1)
-  // =========================================================================
-
-  it("recognizes <think> tags", async () => {
-    const events = await run(["<think>Let me think</think>\n\nAnswer"]);
-    const types = events.map((e) => e.type);
-    expect(types).toContain("thinking_start");
-    expect(types).toContain("text_start");
-    expect(deltas(events, "thinking_delta")).toContain("Let me think");
-    expect(deltas(events, "text_delta")).toContain("Answer");
-  });
-
-  it("recognizes <reasoning> tags", async () => {
-    const events = await run(["<reasoning>Step by step</reasoning>\n\nResult"]);
-    const types = events.map((e) => e.type);
-    expect(types).toContain("thinking_start");
-    expect(types).toContain("text_start");
-    expect(deltas(events, "thinking_delta")).toContain("Step by step");
-    expect(deltas(events, "text_delta")).toContain("Result");
-  });
-
-  it("recognizes <thought> tags", async () => {
-    const events = await run(["<thought>Hmm</thought>\n\nDone"]);
-    const types = events.map((e) => e.type);
-    expect(types).toContain("thinking_start");
-    expect(types).toContain("text_start");
-    expect(deltas(events, "thinking_delta")).toContain("Hmm");
-    expect(deltas(events, "text_delta")).toContain("Done");
-  });
-
-  it("handles <think> split across chunks", async () => {
-    const events = await run(["<thi", "nk>deep thought</think>\n\nText"]);
-    expect(deltas(events, "thinking_delta")).toContain("deep thought");
-    expect(deltas(events, "text_delta")).toContain("Text");
-  });
-
-  it("handles <reasoning> split across chunks", async () => {
-    const events = await run(["<reason", "ing>logic</reasoning>\n\nOutput"]);
-    expect(deltas(events, "thinking_delta")).toContain("logic");
-    expect(deltas(events, "text_delta")).toContain("Output");
-  });
-
-  it("handles close tag split across chunks for <think>", async () => {
-    const events = await run(["<think>idea</th", "ink>\n\nText"]);
-    expect(events.map((e) => e.type)).toContain("thinking_end");
-    expect(deltas(events, "text_delta")).toContain("Text");
-  });
-
-  // =========================================================================
-  // Text-before-thinking (Kiro API sends text first, thinking after)
-  // =========================================================================
-
-  it("reorders thinking before text when text arrives first", async () => {
+  it("getTextBlockIndex returns 1 when text arrives before thinking", () => {
     const output = makeOutput();
     const stream = createAssistantMessageEventStream();
     const parser = new ThinkingTagParser(output, stream);
-
-    // Simulate Kiro API: text content arrives before thinking
-    parser.processChunk("Hello world");
-    parser.processChunk("<thinking>reasoning</thinking>");
-    parser.finalize();
-    stream.end();
-
-    // Thinking block should be at index 0, text at index 1
-    expect(output.content[0]?.type).toBe("thinking");
-    expect(output.content[1]?.type).toBe("text");
-    expect((output.content[0] as { thinking: string }).thinking).toBe("reasoning");
-    expect((output.content[1] as { text: string }).text).toBe("Hello world");
-  });
-
-  it("getTextBlockIndex accounts for reordering when text arrives first", () => {
-    const output = makeOutput();
-    const stream = createAssistantMessageEventStream();
-    const parser = new ThinkingTagParser(output, stream);
-
     parser.processChunk("Hello");
     parser.processChunk("<thinking>t</thinking>");
     parser.finalize();
-
-    // textBlockIndex should be 1 (shifted by thinking insertion)
     expect(parser.getTextBlockIndex()).toBe(1);
   });
 
-  it("handles text-before-thinking across multiple chunks", async () => {
-    const output = makeOutput();
-    const stream = createAssistantMessageEventStream();
-    const parser = new ThinkingTagParser(output, stream);
+  // =========================================================================
+  // 엣지 케이스
+  // =========================================================================
 
-    parser.processChunk("Hey! ");
-    parser.processChunk("What can I help with?");
-    parser.processChunk("<thinking>Let me think about this</thinking>");
-    parser.finalize();
-    stream.end();
+  it("handles empty input", async () => {
+    const events = await run([""]);
+    expect(events).toHaveLength(0);
+  });
 
-    expect(output.content[0]?.type).toBe("thinking");
-    expect(output.content[1]?.type).toBe("text");
-    expect((output.content[0] as { thinking: string }).thinking).toBe("Let me think about this");
-    expect((output.content[1] as { text: string }).text).toBe("Hey! What can I help with?");
+  it("handles thinking-only (no text after)", async () => {
+    const events = await run(["<thinking>just reasoning</thinking>"]);
+    expect(deltas(events, "thinking_delta")).toBe("just reasoning");
+    expect(events.map((e) => e.type)).not.toContain("text_start");
+  });
+
+  it("handles unclosed thinking tag (stream truncated)", async () => {
+    const events = await run(["<thinking>unclosed reasoning"]);
+    // 닫기 태그 없이 끝나도 thinking_end를 발행해야 함
+    expect(deltas(events, "thinking_delta")).toBe("unclosed reasoning");
+    expect(events.map((e) => e.type)).toContain("thinking_end");
   });
 });
