@@ -97,6 +97,7 @@ export class ThinkingTagParser {
   private thinkingBlockIndex: number | null = null;
   private textBlockIndex: number | null = null;
   private thinkingStarted = false;
+  private contentEmitted = false;
 
   constructor(
     private output: AssistantMessage,
@@ -156,19 +157,27 @@ export class ThinkingTagParser {
   // ---------------------------------------------------------------------------
 
   private processProvisional(): void {
+    // Content already emitted → tag can't be at position 0
+    if (this.contentEmitted) {
+      this.convertToText();
+      this.processTextConfirmed();
+      return;
+    }
+
     const match = findEarliestOpeningTag(this.buffer);
 
     if (match) {
-      // Emit content before tag as thinking
-      const before = this.buffer.slice(0, match.pos);
-
-      if (before) {
+      if (match.pos !== 0) {
+        // Tag is not at position 0 — treat as literal text
         this.ensureThinking();
-        this.appendThinking(before);
+        this.appendThinking(this.buffer);
+        this.buffer = "";
+        this.contentEmitted = true;
+        this.convertToText();
+        return;
       }
 
-      // Strip tag, transition to IN_THINKING
-      this.buffer = this.buffer.slice(match.pos + match.variant.open.length);
+      this.buffer = this.buffer.slice(match.variant.open.length);
       this.activeCloseTag = match.variant.close;
       this.state = "IN_THINKING";
       this.ensureThinking();
@@ -186,14 +195,18 @@ export class ThinkingTagParser {
     const safeLen = this.buffer.length - trailingPrefix;
 
     if (safeLen > 0) {
+      const safe = this.buffer.slice(0, safeLen);
       this.ensureThinking();
-      this.appendThinking(this.buffer.slice(0, safeLen));
+      this.appendThinking(safe);
       this.buffer = this.buffer.slice(safeLen);
-    }
+      this.contentEmitted = true;
+      this.convertToText();
 
-    // Check if remaining buffer can't be a tag prefix anymore
-    if (this.buffer.length === 0 && !this.buffer.includes("<")) {
-      // Will be checked next chunk
+      if (this.buffer) {
+        this.processTextConfirmed();
+      }
+
+      return;
     }
   }
 

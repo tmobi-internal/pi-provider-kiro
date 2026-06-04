@@ -91,16 +91,16 @@ describe("Feature 7: Thinking Tag Parser", () => {
   // Provisional streaming: 즉시 출력 + 타입 전환
   // =========================================================================
 
-  it("emits content as thinking_delta immediately (no buffering delay)", () => {
+  it("emits content as thinking_delta immediately then converts to text", () => {
     const output = makeOutput();
     const stream = createAssistantMessageEventStream();
     const parser = new ThinkingTagParser(output, stream);
 
     parser.processChunk("Hello world, this is content");
 
-    // 즉시 emit됨 — thinking type으로
-    expect(output.content[0]?.type).toBe("thinking");
-    expect((output.content[0] as { thinking: string }).thinking).toContain("Hello");
+    // Non-whitespace → 즉시 emit + text 전환
+    expect(output.content[0]?.type).toBe("text");
+    expect((output.content[0] as { text: string }).text).toContain("Hello");
   });
 
   it("converts type from thinking to text on finalize when no tag found", () => {
@@ -232,18 +232,18 @@ describe("Feature 7: Thinking Tag Parser", () => {
     expect(deltas(events, "text_delta")).toContain("Text");
   });
 
-  it("emits safe portion before held-back prefix", () => {
+  it("flushes held-back prefix as text after non-whitespace emit", () => {
     const output = makeOutput();
     const stream = createAssistantMessageEventStream();
     const parser = new ThinkingTagParser(output, stream);
 
     parser.processChunk("Hello world, some long text<thin");
 
-    // "Hello world, some long text" 는 즉시 emit, "<thin"은 hold back
-    expect(output.content[0]?.type).toBe("thinking");
-    const text = (output.content[0] as { thinking: string }).thinking;
+    // Non-whitespace → 즉시 text 전환, prefix도 text로 flush
+    expect(output.content[0]?.type).toBe("text");
+    const text = (output.content[0] as { text: string }).text;
     expect(text).toContain("Hello world");
-    expect(text).not.toContain("<thin");
+    expect(text).toContain("<thin");
   });
 
   it("detects thinking end tag split across chunks", async () => {
@@ -362,16 +362,62 @@ describe("Feature 7: Thinking Tag Parser", () => {
     const parser = new ThinkingTagParser(output, stream);
 
     parser.processChunk("First chunk ");
-    const afterFirst = (output.content[0] as { thinking: string }).thinking;
+    // Immediately converted to text
+    const afterFirst = (output.content[0] as { text: string }).text;
 
     parser.processChunk("second chunk");
-    const afterSecond = (output.content[0] as { thinking: string }).thinking;
+    const afterSecond = (output.content[0] as { text: string }).text;
 
-    // 항상 append — 이전 내용 포함
+    // Append only — previous content preserved
     expect(afterSecond).toContain(afterFirst);
+    expect(afterSecond).toContain("second chunk");
   });
 });
 
+
+describe("Feature 7: Start position limit", () => {
+
+  it("treats mid-content <thinking> as literal text", async () => {
+    const output = finalOutput(["Hello world<thinking>reasoning</thinking>\n\nMore"]);
+    expect(output.content).toHaveLength(1);
+    expect(output.content[0]?.type).toBe("text");
+    expect((output.content[0] as { text: string }).text).toBe(
+      "Hello world<thinking>reasoning</thinking>\n\nMore",
+    );
+  });
+
+  it("treats mid-content <thinking> across chunks as literal text", async () => {
+    const output = finalOutput(["Hey! ", "What?", "<thinking>reason</thinking>"]);
+    expect(output.content).toHaveLength(1);
+    expect(output.content[0]?.type).toBe("text");
+    expect((output.content[0] as { text: string }).text).toBe(
+      "Hey! What?<thinking>reason</thinking>",
+    );
+  });
+
+  it("leading whitespace before thinking tag — treated as text", async () => {
+    const output = finalOutput(["  \n<thinking>deep thought</thinking>\n\nAnswer"]);
+    expect(output.content).toHaveLength(1);
+    expect(output.content[0]?.type).toBe("text");
+    expect((output.content[0] as { text: string }).text).toBe(
+      "  \n<thinking>deep thought</thinking>\n\nAnswer",
+    );
+  });
+
+  it("whitespace chunk before tag — treated as text", () => {
+    const output = makeOutput();
+    const stream = createAssistantMessageEventStream();
+    const parser = new ThinkingTagParser(output, stream);
+
+    parser.processChunk("   ");
+    parser.processChunk("<thinking>thought</thinking>\n\nText");
+    parser.finalize();
+
+    expect(output.content[0]?.type).toBe("text");
+    expect((output.content[0] as { text: string }).text).toContain("   ");
+    expect((output.content[0] as { text: string }).text).toContain("<thinking>");
+  });
+});
 describe("Feature 7: Close tag false-positive defense", () => {
 
   it("ignores close tag wrapped in backticks inside thinking", async () => {
@@ -452,12 +498,13 @@ describe("Feature 7: partial reference behavior", () => {
 
     parser.processChunk("Hello world");
 
-    // During streaming: content[0] is thinking
-    expect(output.content[0]?.type).toBe("thinking");
+    // Non-whitespace → 즉시 text 전환
+    expect(output.content[0]?.type).toBe("text");
+    expect((output.content[0] as { text: string }).text).toBe("Hello world");
 
     parser.finalize();
 
-    // After finalize: content[0] converted to text (same object mutated)
+    // Finalize doesn't change already-converted content
     expect(output.content[0]?.type).toBe("text");
     expect((output.content[0] as { text: string }).text).toBe("Hello world");
   });
