@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }));
 vi.mock("node:fs", () => ({
   existsSync: vi.fn(() => false),
   mkdirSync: vi.fn(),
@@ -9,9 +8,8 @@ vi.mock("node:fs", () => ({
 }));
 
 const { existsSync, readFileSync, writeFileSync } = await import("node:fs");
-const { execFileSync } = await import("node:child_process");
 
-describe("Model cache and API integration", () => {
+describe("Model loading and cache", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.mocked(existsSync).mockReturnValue(false);
@@ -24,152 +22,206 @@ describe("Model cache and API integration", () => {
     vi.unstubAllGlobals();
   });
 
-  async function loadModels() {
-    const mod = await import("../src/models.js");
-    return mod;
-  }
-
-  const API_MODELS = [
-    {
-      modelId: "claude-sonnet-4.6",
-      modelName: "Claude Sonnet 4.6",
-      tokenLimits: { maxInputTokens: 1000000, maxOutputTokens: 64000 },
-      additionalModelRequestFieldsSchema: { properties: { thinking: { type: "object" } } },
-      supportedInputTypes: ["TEXT", "IMAGE"],
-    },
-    {
-      modelId: "minimax-m2.5",
-      modelName: "MiniMax M2.5",
-      tokenLimits: { maxInputTokens: 196000, maxOutputTokens: 64000 },
-      additionalModelRequestFieldsSchema: null,
-      supportedInputTypes: ["TEXT"],
-    },
+  const CACHE_MODELS = [
+    { modelId: "claude-sonnet-4.6", modelName: "Claude Sonnet 4.6", reasoning: true, input: ["text", "image"], contextWindow: 1000000, maxTokens: 64000, promptCaching: true },
+    { modelId: "minimax-m2.5", modelName: "MiniMax M2.5", reasoning: false, input: ["text"], contextWindow: 196000, maxTokens: 64000, promptCaching: false },
   ];
 
-  describe("buildModelFromApi via cache", () => {
-    it("reads contextWindow and maxTokens from API response", async () => {
-      vi.mocked(existsSync).mockReturnValue(true);
-      vi.mocked(readFileSync).mockReturnValue(
-        JSON.stringify({ models: API_MODELS, timestamp: Date.now(), apiRegion: "us-east-1" }),
-      );
+  const API_RESPONSE = {
+    models: [
+      {
+        modelId: "claude-sonnet-4.6",
+        modelName: "Claude Sonnet 4.6",
+        tokenLimits: { maxInputTokens: 1000000, maxOutputTokens: 64000 },
+        additionalModelRequestFieldsSchema: { properties: { thinking: { type: "object" } } },
+        supportedInputTypes: ["TEXT", "IMAGE"],
+        promptCaching: { supportsPromptCaching: true },
+      },
+      {
+        modelId: "minimax-m2.5",
+        modelName: "MiniMax M2.5",
+        tokenLimits: { maxInputTokens: 196000, maxOutputTokens: 64000 },
+        additionalModelRequestFieldsSchema: null,
+        supportedInputTypes: ["TEXT"],
+        promptCaching: { supportsPromptCaching: false },
+      },
+    ],
+  };
 
-      const { getKiroModels } = await loadModels();
-      const models = getKiroModels();
-      const sonnet = models.find((m) => m.id === "claude-sonnet-4-6");
-
-      expect(sonnet?.contextWindow).toBe(1000000);
-      expect(sonnet?.maxTokens).toBe(64000);
+  function freshCache() {
+    return JSON.stringify({
+      timestamp: new Date().toISOString(),
+      apiRegion: "us-east-1",
+      models: CACHE_MODELS,
     });
+  }
 
-    it("detects reasoning from additionalModelRequestFieldsSchema.properties.thinking", async () => {
+  function staleCache() {
+    const staleDate = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString();
+    return JSON.stringify({
+      timestamp: staleDate,
+      apiRegion: "us-east-1",
+      models: CACHE_MODELS,
+    });
+  }
+
+  async function loadModels() {
+    return await import("../src/models.js");
+  }
+
+  describe("getKiroModels (sync path)", () => {
+    it("reads from fresh cache file", async () => {
       vi.mocked(existsSync).mockReturnValue(true);
-      vi.mocked(readFileSync).mockReturnValue(
-        JSON.stringify({ models: API_MODELS, timestamp: Date.now(), apiRegion: "us-east-1" }),
-      );
+      vi.mocked(readFileSync).mockReturnValue(freshCache());
 
       const { getKiroModels } = await loadModels();
       const models = getKiroModels();
 
-      expect(models.find((m) => m.id === "claude-sonnet-4-6")?.reasoning).toBe(true);
+      expect(models.find((m) => m.id === "claude-sonnet-4-6")?.contextWindow).toBe(1000000);
       expect(models.find((m) => m.id === "minimax-m2-5")?.reasoning).toBe(false);
     });
 
-    it("maps supportedInputTypes to lowercase text/image", async () => {
+    it("uses stale cache as fallback (sync path always uses cache regardless of TTL)", async () => {
       vi.mocked(existsSync).mockReturnValue(true);
-      vi.mocked(readFileSync).mockReturnValue(
-        JSON.stringify({ models: API_MODELS, timestamp: Date.now(), apiRegion: "us-east-1" }),
-      );
+      vi.mocked(readFileSync).mockReturnValue(staleCache());
 
       const { getKiroModels } = await loadModels();
       const models = getKiroModels();
 
-      expect(models.find((m) => m.id === "claude-sonnet-4-6")?.input).toEqual(["text", "image"]);
-      expect(models.find((m) => m.id === "minimax-m2-5")?.input).toEqual(["text"]);
+      expect(models.find((m) => m.id === "claude-sonnet-4-6")).toBeDefined();
     });
-  });
 
-  describe("legacy cache handling", () => {
+    it("falls back to hardcoded models when no cache", async () => {
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      const { getKiroModels } = await loadModels();
+      const models = getKiroModels();
+
+      expect(models.length).toBeGreaterThan(0);
+      expect(models[0].provider).toBe("kiro");
+    });
+
     it("discards legacy string[] cache format", async () => {
       vi.mocked(existsSync).mockReturnValue(true);
       vi.mocked(readFileSync).mockReturnValue(
-        JSON.stringify({ models: ["claude-sonnet-4-6", "auto"], timestamp: Date.now() }),
+        JSON.stringify({ models: ["claude-sonnet-4-6", "auto"], timestamp: new Date().toISOString() }),
       );
-      vi.mocked(execFileSync).mockImplementation(() => { throw new Error("no cli"); });
 
       const { getKiroModels } = await loadModels();
       const models = getKiroModels();
 
-      // Falls through to FALLBACK_MODEL_IDS
-      expect(models.length).toBeGreaterThan(0);
+      // Falls through to FALLBACK
       expect(models[0].id).not.toBe("claude-sonnet-4-6");
     });
   });
 
-  describe("stale cache behavior", () => {
-    it("uses stale API cache as fallback when no fresh data", async () => {
-      const staleTimestamp = Date.now() - 2 * 24 * 60 * 60 * 1000; // 2 days old
+  describe("loadKiroModels (async path)", () => {
+    it("uses fresh cache without API call", async () => {
       vi.mocked(existsSync).mockReturnValue(true);
-      vi.mocked(readFileSync).mockReturnValue(
-        JSON.stringify({ models: API_MODELS, timestamp: staleTimestamp, apiRegion: "us-east-1" }),
-      );
-      vi.mocked(execFileSync).mockImplementation(() => { throw new Error("no cli"); });
+      vi.mocked(readFileSync).mockReturnValue(freshCache());
 
-      const { getKiroModels } = await loadModels();
-      const models = getKiroModels();
-
-      // Should still use stale cache models
-      expect(models.find((m) => m.id === "claude-sonnet-4-6")).toBeDefined();
-    });
-  });
-
-  describe("refreshModelsCache", () => {
-    it("skips fetch when cache is fresh for same region", async () => {
-      vi.mocked(existsSync).mockReturnValue(true);
-      vi.mocked(readFileSync).mockReturnValue(
-        JSON.stringify({ models: API_MODELS, timestamp: Date.now(), apiRegion: "us-east-1" }),
-      );
-
-      const { refreshModelsCache } = await loadModels();
-      await refreshModelsCache("token", "us-east-1");
+      const { loadKiroModels } = await loadModels();
+      await loadKiroModels("token", "us-east-1");
 
       expect(fetch).not.toHaveBeenCalled();
     });
 
-    it("fetches when cache is stale", async () => {
-      const staleTimestamp = Date.now() - 2 * 24 * 60 * 60 * 1000;
+    it("calls API when cache is stale", async () => {
       vi.mocked(existsSync).mockReturnValue(true);
-      vi.mocked(readFileSync).mockReturnValue(
-        JSON.stringify({ models: API_MODELS, timestamp: staleTimestamp, apiRegion: "us-east-1" }),
-      );
+      vi.mocked(readFileSync).mockReturnValue(staleCache());
       vi.mocked(fetch).mockResolvedValue({
         ok: true,
-        json: async () => ({ models: API_MODELS }),
+        json: async () => API_RESPONSE,
       } as Response);
 
-      const { refreshModelsCache } = await loadModels();
-      await refreshModelsCache("token", "us-east-1");
+      const { loadKiroModels } = await loadModels();
+      const models = await loadKiroModels("token", "us-east-1");
 
       expect(fetch).toHaveBeenCalled();
+      expect(models.find((m) => m.id === "claude-sonnet-4-6")?.reasoning).toBe(true);
       expect(writeFileSync).toHaveBeenCalled();
     });
 
-    it("updates cachedModels array in place", async () => {
+    it("calls API when no cache exists", async () => {
       vi.mocked(existsSync).mockReturnValue(false);
-      vi.mocked(execFileSync).mockImplementation(() => { throw new Error("no cli"); });
       vi.mocked(fetch).mockResolvedValue({
         ok: true,
-        json: async () => ({ models: API_MODELS }),
+        json: async () => API_RESPONSE,
       } as Response);
 
-      const { getKiroModels, refreshModelsCache } = await loadModels();
-      const before = getKiroModels();
-      const ref = before;
+      const { loadKiroModels } = await loadModels();
+      const models = await loadKiroModels("token", "us-east-1");
 
-      await refreshModelsCache("token", "us-east-1");
+      expect(fetch).toHaveBeenCalled();
+      expect(models.find((m) => m.id === "claude-sonnet-4-6")).toBeDefined();
+    });
 
-      const after = getKiroModels();
-      expect(after).toBe(ref); // Same array reference
-      expect(after.find((m) => m.id === "claude-sonnet-4-6")).toBeDefined();
+    it("falls back to stale cache when API fails", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue(staleCache());
+      vi.mocked(fetch).mockResolvedValue({ ok: false } as Response);
+
+      const { loadKiroModels } = await loadModels();
+      const models = await loadKiroModels("token", "us-east-1");
+
+      expect(models.find((m) => m.id === "claude-sonnet-4-6")).toBeDefined();
+    });
+
+    it("uses fallback when no token and no cache", async () => {
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      const { loadKiroModels } = await loadModels();
+      const models = await loadKiroModels(undefined, undefined);
+
+      expect(fetch).not.toHaveBeenCalled();
+      expect(models.length).toBeGreaterThan(0);
+    });
+
+    it("saves cache as prettified JSON with normalized format", async () => {
+      vi.mocked(existsSync).mockImplementation((p) => !String(p).includes("kiro-models"));
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => API_RESPONSE,
+      } as Response);
+
+      const { loadKiroModels } = await loadModels();
+      await loadKiroModels("token", "us-east-1");
+
+      const written = vi.mocked(writeFileSync).mock.calls[0][1] as string;
+      const parsed = JSON.parse(written);
+
+      expect(parsed.timestamp).toBeDefined();
+      expect(parsed.apiRegion).toBe("us-east-1");
+      expect(parsed.models[0].modelId).toBe("claude-sonnet-4.6");
+      expect(parsed.models[0].reasoning).toBe(true);
+      expect(parsed.models[0].input).toEqual(["text", "image"]);
+      expect(parsed.models[0].contextWindow).toBe(1000000);
+      expect(parsed.models[0].promptCaching).toBe(true);
+
+      // Prettified
+      expect(written).toContain("\n");
+    });
+
+    it("normalizes unknown input types to text-only", async () => {
+      vi.mocked(existsSync).mockReturnValue(false);
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [{
+            modelId: "new-model",
+            modelName: "New Model",
+            tokenLimits: { maxInputTokens: 100000, maxOutputTokens: 32000 },
+            additionalModelRequestFieldsSchema: null,
+            supportedInputTypes: ["TEXT", "VIDEO", "AUDIO"],
+            promptCaching: null,
+          }],
+        }),
+      } as Response);
+
+      const { loadKiroModels } = await loadModels();
+      const models = await loadKiroModels("token", "us-east-1");
+
+      expect(models.find((m) => m.id === "new-model")?.input).toEqual(["text"]);
     });
   });
 });
