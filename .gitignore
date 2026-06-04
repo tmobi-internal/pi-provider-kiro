@@ -13,3 +13,4 @@ devlogs/
 .idea/
 .codegraph/
 pnpm-workspace.yaml
+.pi/

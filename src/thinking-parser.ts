@@ -1,5 +1,6 @@
 // ABOUTME: Stateful streaming parser for thinking tags.
-// ABOUTME: Emits events during processChunk; pi re-renders from output.content on each event.
+// ABOUTME: Provisional streaming — content emits immediately as thinking, converts to text if no tag found.
+// ABOUTME: No content splice/rearrangement. Append only. Type conversion only.
 
 import type {
   AssistantMessage,
@@ -20,7 +21,7 @@ const THINKING_TAG_VARIANTS: Array<{ open: string; close: string }> = [
 
 const MAX_OPEN_TAG_LENGTH = Math.max(...THINKING_TAG_VARIANTS.map((v) => v.open.length));
 
-type State = "PENDING" | "IN_THINKING" | "STREAMING_TEXT";
+type State = "PROVISIONAL" | "IN_THINKING" | "POST_THINKING" | "TEXT_CONFIRMED";
 
 interface TagMatch {
   pos: number;
@@ -74,13 +75,11 @@ function findRealCloseTag(text: string, closeTag: string, streaming = false): nu
 
     if (charBefore && QUOTE_CHARS.has(charBefore)) {
       if (charAfter === charBefore) {
-        // Confirmed fake — skip
         start = endPos + 1;
         continue;
       }
 
       if (streaming && endPos >= text.length) {
-        // End of buffer — can't confirm if quote closes. Treat as not found.
         return -1;
       }
     }
@@ -92,13 +91,12 @@ function findRealCloseTag(text: string, closeTag: string, streaming = false): nu
 }
 
 export class ThinkingTagParser {
-  private state: State = "PENDING";
+  private state: State = "PROVISIONAL";
   private buffer = "";
   private activeCloseTag = "";
   private thinkingBlockIndex: number | null = null;
   private textBlockIndex: number | null = null;
-  private textBefore = "";
-  private thinkingDone = false;
+  private thinkingStarted = false;
 
   constructor(
     private output: AssistantMessage,
@@ -109,32 +107,40 @@ export class ThinkingTagParser {
     this.buffer += chunk;
 
     switch (this.state) {
-      case "PENDING":
-        this.processPending();
+      case "PROVISIONAL":
+        this.processProvisional();
         break;
 
       case "IN_THINKING":
         this.processInThinking();
         break;
 
-      case "STREAMING_TEXT":
-        this.processStreamingText();
+      case "POST_THINKING":
+        this.processPostThinking();
+        break;
+
+      case "TEXT_CONFIRMED":
+        this.processTextConfirmed();
         break;
     }
   }
 
   finalize(): void {
     switch (this.state) {
-      case "PENDING":
-        this.finalizePending();
+      case "PROVISIONAL":
+        this.finalizeProvisional();
         break;
 
       case "IN_THINKING":
         this.finalizeInThinking();
         break;
 
-      case "STREAMING_TEXT":
-        this.finalizeStreamingText();
+      case "POST_THINKING":
+        this.finalizePostThinking();
+        break;
+
+      case "TEXT_CONFIRMED":
+        this.finalizeTextConfirmed();
         break;
     }
 
@@ -145,47 +151,55 @@ export class ThinkingTagParser {
     return this.textBlockIndex;
   }
 
-  private processPending(): void {
+  // ---------------------------------------------------------------------------
+  // PROVISIONAL: emit as thinking, look for opening tag
+  // ---------------------------------------------------------------------------
+
+  private processProvisional(): void {
     const match = findEarliestOpeningTag(this.buffer);
 
     if (match) {
+      // Emit content before tag as thinking
       const before = this.buffer.slice(0, match.pos);
+
+      if (before) {
+        this.ensureThinking();
+        this.appendThinking(before);
+      }
+
+      // Strip tag, transition to IN_THINKING
       this.buffer = this.buffer.slice(match.pos + match.variant.open.length);
       this.activeCloseTag = match.variant.close;
       this.state = "IN_THINKING";
-
-      this.startThinking();
-
-      if (before) {
-        this.textBefore = before;
-      }
-
+      this.ensureThinking();
       this.processInThinking();
       return;
     }
 
-    // No tag found. Check if buffer can still become a thinking tag.
-    if (!this.buffer.includes("<") && this.buffer.length >= MAX_OPEN_TAG_LENGTH) {
-      // No '<' at all — impossible for a tag to appear
-      this.state = "STREAMING_TEXT";
-      this.processStreamingText();
-      return;
+    // No tag found — emit safe portion, hold back potential prefix
+    const openTags = THINKING_TAG_VARIANTS.map((v) => v.open);
+    const trailingPrefix = getTrailingPrefixLength(this.buffer, openTags);
+
+    // If entire buffer is a possible prefix, hold everything
+    if (trailingPrefix >= this.buffer.length) return;
+
+    const safeLen = this.buffer.length - trailingPrefix;
+
+    if (safeLen > 0) {
+      this.ensureThinking();
+      this.appendThinking(this.buffer.slice(0, safeLen));
+      this.buffer = this.buffer.slice(safeLen);
     }
 
-    // Buffer has '<' but no thinking tag. Check if suffix from last '<' is a possible prefix.
-    const lastLt = this.buffer.lastIndexOf("<");
-
-    if (lastLt !== -1) {
-      const suffix = this.buffer.slice(lastLt);
-      const isPossiblePrefix = THINKING_TAG_VARIANTS.some((v) => v.open.startsWith(suffix));
-
-      if (!isPossiblePrefix) {
-        // '<' is not start of any thinking tag — safe to stream all
-        this.state = "STREAMING_TEXT";
-        this.processStreamingText();
-      }
+    // Check if remaining buffer can't be a tag prefix anymore
+    if (this.buffer.length === 0 && !this.buffer.includes("<")) {
+      // Will be checked next chunk
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // IN_THINKING: confirmed thinking, look for close tag
+  // ---------------------------------------------------------------------------
 
   private processInThinking(): void {
     const closePos = findRealCloseTag(this.buffer, this.activeCloseTag, true);
@@ -206,23 +220,16 @@ export class ThinkingTagParser {
       }
 
       this.buffer = remaining;
-      this.state = "STREAMING_TEXT";
-
-      // Emit buffered text-before (from PENDING path)
-      if (this.textBefore) {
-        this.ensureTextBlock();
-        this.appendText(this.textBefore);
-        this.textBefore = "";
-      }
+      this.state = "POST_THINKING";
 
       if (this.buffer) {
-        this.processStreamingText();
+        this.processPostThinking();
       }
 
       return;
     }
 
-    // Emit safe portion, hold back potential close tag prefix + 1 char for quote detection
+    // Emit safe portion, hold back potential close tag prefix + quote char
     const trailingPrefix = getTrailingPrefixLength(this.buffer, [this.activeCloseTag]);
     const charBeforePrefix = trailingPrefix > 0 && trailingPrefix < this.buffer.length
       ? this.buffer[this.buffer.length - trailingPrefix - 1]
@@ -239,80 +246,41 @@ export class ThinkingTagParser {
     }
   }
 
-  private processStreamingText(): void {
+  // ---------------------------------------------------------------------------
+  // POST_THINKING: thinking done, text at index 1
+  // ---------------------------------------------------------------------------
+
+  private processPostThinking(): void {
     if (!this.buffer) return;
-
-    // Only look for tags if thinking hasn't been extracted yet
-    if (!this.thinkingDone) {
-      const match = findEarliestOpeningTag(this.buffer);
-
-      if (match) {
-        // Emit text before the tag
-        const before = this.buffer.slice(0, match.pos);
-
-        if (before) {
-          this.ensureTextBlock();
-          this.appendText(before);
-        }
-
-        // Restructure: thinking at index 0, existing text moves to index 1
-        this.restructureForThinking();
-
-        this.buffer = this.buffer.slice(match.pos + match.variant.open.length);
-        this.activeCloseTag = match.variant.close;
-        this.state = "IN_THINKING";
-        this.processInThinking();
-        return;
-      }
-    }
 
     this.ensureTextBlock();
     this.appendText(this.buffer);
     this.buffer = "";
   }
 
-  private finalizePending(): void {
+  // ---------------------------------------------------------------------------
+  // TEXT_CONFIRMED: type converted, streaming as text at index 0
+  // ---------------------------------------------------------------------------
+
+  private processTextConfirmed(): void {
     if (!this.buffer) return;
 
-    const match = findEarliestOpeningTag(this.buffer);
+    this.appendText(this.buffer);
+    this.buffer = "";
+  }
 
-    if (!match) {
-      this.ensureTextBlock();
-      this.appendText(this.buffer);
-      return;
+  // ---------------------------------------------------------------------------
+  // Finalize
+  // ---------------------------------------------------------------------------
+
+  private finalizeProvisional(): void {
+    if (this.buffer) {
+      this.ensureThinking();
+      this.appendThinking(this.buffer);
     }
 
-    const before = this.buffer.slice(0, match.pos);
-    const afterOpen = this.buffer.slice(match.pos + match.variant.open.length);
-    const closePos = findRealCloseTag(afterOpen, match.variant.close);
-
-    let thinkingContent: string;
-    let textAfter: string;
-
-    if (closePos !== -1) {
-      thinkingContent = afterOpen.slice(0, closePos);
-      textAfter = afterOpen.slice(closePos + match.variant.close.length);
-
-      if (textAfter.startsWith("\n\n")) {
-        textAfter = textAfter.slice(2);
-      }
-    } else {
-      thinkingContent = afterOpen;
-      textAfter = "";
-    }
-
-    if (thinkingContent) {
-      this.startThinking();
-      this.appendThinking(thinkingContent);
-      this.endThinking();
-    }
-
-    const combinedText = before + textAfter;
-
-    if (combinedText) {
-      this.ensureTextBlock();
-      this.appendText(combinedText);
-    }
+    // No tag found → convert type to text
+    this.convertToText();
   }
 
   private finalizeInThinking(): void {
@@ -321,40 +289,57 @@ export class ThinkingTagParser {
     }
 
     this.endThinking();
-
-    if (this.textBefore) {
-      this.ensureTextBlock();
-      this.appendText(this.textBefore);
-      this.textBefore = "";
-    }
   }
 
-  private finalizeStreamingText(): void {
+  private finalizePostThinking(): void {
     if (this.buffer) {
       this.ensureTextBlock();
       this.appendText(this.buffer);
     }
   }
 
-  private restructureForThinking(): void {
-    // Text is at index 0. Insert thinking at 0, text moves to 1.
-    // pi re-renders from output.content — no flicker.
-    const textBlock = this.output.content[0];
-    this.output.content[0] = { type: "thinking", thinking: "" };
-
-    if (textBlock) {
-      this.output.content[1] = textBlock;
-      this.textBlockIndex = 1;
+  private finalizeTextConfirmed(): void {
+    if (this.buffer) {
+      this.appendText(this.buffer);
     }
-
-    this.thinkingBlockIndex = 0;
-    this.stream.push({ type: "thinking_start", contentIndex: 0, partial: this.output });
   }
 
-  private startThinking(): void {
+  // ---------------------------------------------------------------------------
+  // Type conversion: thinking → text (same index 0, same content)
+  // ---------------------------------------------------------------------------
+
+  private convertToText(): void {
+    const idx = this.thinkingBlockIndex;
+
+    if (idx === null) return;
+
+    const block = this.output.content[idx] as ThinkingContent;
+    const text = block.thinking;
+
+    // Emit thinking_end
+    this.stream.push({ type: "thinking_end", contentIndex: idx, content: text, partial: this.output });
+
+    // Mutate type: thinking → text (same content, same index)
+    (this.output.content[idx] as unknown as TextContent) = { type: "text", text };
+
+    // Emit text_start
+    this.textBlockIndex = idx;
+    this.stream.push({ type: "text_start", contentIndex: idx, partial: this.output });
+
+    this.state = "TEXT_CONFIRMED";
+  }
+
+  // ---------------------------------------------------------------------------
+  // Primitives
+  // ---------------------------------------------------------------------------
+
+  private ensureThinking(): void {
+    if (this.thinkingStarted) return;
+
     this.thinkingBlockIndex = this.output.content.length;
     this.output.content.push({ type: "thinking", thinking: "" });
     this.stream.push({ type: "thinking_start", contentIndex: this.thinkingBlockIndex, partial: this.output });
+    this.thinkingStarted = true;
   }
 
   private appendThinking(delta: string): void {
@@ -372,7 +357,6 @@ export class ThinkingTagParser {
 
     const block = this.output.content[idx] as ThinkingContent;
     this.stream.push({ type: "thinking_end", contentIndex: idx, content: block.thinking, partial: this.output });
-    this.thinkingDone = true;
   }
 
   private ensureTextBlock(): void {

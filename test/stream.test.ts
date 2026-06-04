@@ -300,9 +300,16 @@ describe("Feature 9: Streaming Integration", () => {
 
     const stream = streamKiro(makeModel({ reasoning: true }), makeContext(), { apiKey: "tok" });
     const events = await collect(stream);
-    const firstTextDelta = events.find((e) => e.type === "text_delta");
 
-    expect(firstTextDelta?.type === "text_delta" && firstTextDelta.delta).toBe("Hello world");
+    // Provisional streaming: content emits as thinking_delta, then converts to text
+    const thinkingDelta = events.find((e) => e.type === "thinking_delta");
+    expect(thinkingDelta?.type === "thinking_delta" && (thinkingDelta as { delta: string }).delta).toBe("Hello world");
+
+    // Final output has text type (converted from thinking)
+    const done = events.find((e) => e.type === "done");
+    const msg = done?.type === "done" ? done.message : undefined;
+    expect(msg?.content[0]?.type).toBe("text");
+    expect((msg?.content[0] as { text: string }).text).toBe("Hello world");
 
     vi.unstubAllGlobals();
   });
