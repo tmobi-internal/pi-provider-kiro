@@ -225,3 +225,121 @@ describe("Model loading and cache", () => {
     });
   });
 });
+
+describe("Dynamic model refresh (modifyModels support)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.mocked(existsSync).mockReturnValue(false);
+    vi.mocked(writeFileSync).mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  const CACHE_MODELS = [
+    { modelId: "claude-sonnet-4.6", modelName: "Claude Sonnet 4.6", reasoning: true, input: ["text", "image"], contextWindow: 1000000, maxTokens: 64000, promptCaching: true },
+    { modelId: "minimax-m2.5", modelName: "MiniMax M2.5", reasoning: false, input: ["text"], contextWindow: 196000, maxTokens: 64000, promptCaching: false },
+  ];
+
+  function freshCache() {
+    return JSON.stringify({
+      timestamp: new Date().toISOString(),
+      apiRegion: "us-east-1",
+      models: CACHE_MODELS,
+    });
+  }
+
+  it("usedFallback is true after loadKiroModels without token or cache", async () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    const mod = await import("../src/models.js");
+    await mod.loadKiroModels(undefined, undefined);
+    expect(mod.usedFallback).toBe(true);
+  });
+
+  it("usedFallback is false after loadKiroModels with fresh cache", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReturnValue(freshCache());
+    const mod = await import("../src/models.js");
+    await mod.loadKiroModels(undefined, undefined);
+    expect(mod.usedFallback).toBe(false);
+  });
+
+  it("readCachedModels returns models from cache file", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReturnValue(freshCache());
+    const { readCachedModels } = await import("../src/models.js");
+    const models = readCachedModels();
+    expect(models).not.toBeNull();
+    expect(models!.find((m) => m.id === "claude-sonnet-4-6")).toBeDefined();
+  });
+
+  it("readCachedModels returns null when no cache", async () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    const { readCachedModels } = await import("../src/models.js");
+    expect(readCachedModels()).toBeNull();
+  });
+
+  it("triggerModelCacheRefresh calls API once and saves cache", async () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        models: [{
+          modelId: "claude-sonnet-4.6",
+          modelName: "Claude Sonnet 4.6",
+          tokenLimits: { maxInputTokens: 1000000, maxOutputTokens: 64000 },
+          additionalModelRequestFieldsSchema: { properties: { thinking: {} } },
+          supportedInputTypes: ["TEXT", "IMAGE"],
+          promptCaching: { supportsPromptCaching: true },
+        }],
+      }),
+    } as Response);
+
+    const { triggerModelCacheRefresh } = await import("../src/models.js");
+    triggerModelCacheRefresh("token", "us-east-1");
+
+    // Wait for fire-and-forget to complete
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(writeFileSync).toHaveBeenCalled();
+  });
+
+  it("triggerModelCacheRefresh only fires once per session", async () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({ models: [] }),
+    } as Response);
+
+    const { triggerModelCacheRefresh } = await import("../src/models.js");
+    triggerModelCacheRefresh("token", "us-east-1");
+    triggerModelCacheRefresh("token", "us-east-1");
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("triggerModelCacheRefresh sets usedFallback to false on success", async () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        models: [{ modelId: "test", modelName: "Test", tokenLimits: {}, supportedInputTypes: ["TEXT"] }],
+      }),
+    } as Response);
+
+    const mod = await import("../src/models.js");
+    await mod.loadKiroModels(undefined, undefined); // sets usedFallback = true
+    expect(mod.usedFallback).toBe(true);
+
+    mod.triggerModelCacheRefresh("token", "us-east-1");
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(mod.usedFallback).toBe(false);
+  });
+});

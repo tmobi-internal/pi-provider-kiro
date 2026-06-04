@@ -7,7 +7,14 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getKiroCliCredentials, getStoredCredentials } from "./kiro-cli.js";
 import { setExtensionContext } from "./login-ui.js";
 import { setNotifyContext } from "./notify.js";
-import { filterModelsByRegion, loadKiroModels, resolveApiRegion } from "./models.js";
+import {
+  filterModelsByRegion,
+  loadKiroModels,
+  readCachedModels,
+  resolveApiRegion,
+  triggerModelCacheRefresh,
+  usedFallback,
+} from "./models.js";
 import type { KiroCredentials } from "./oauth.js";
 import { loginKiro, refreshKiroToken } from "./oauth.js";
 import { streamKiro } from "./stream.js";
@@ -48,7 +55,19 @@ export default async function (pi: ExtensionAPI) {
       modifyModels: (models: Model<Api>[], cred: OAuthCredentials) => {
         const apiRegion = resolveApiRegion((cred as KiroCredentials).region);
 
-        const kiroOnly = models.filter((m: Model<Api>) => m.provider === "kiro");
+        // Dynamic refresh: if running on fallback, try to load from cache or trigger API
+        let kiroOnly = models.filter((m: Model<Api>) => m.provider === "kiro");
+
+        if (usedFallback) {
+          const cached = readCachedModels();
+
+          if (cached) {
+            kiroOnly = cached as unknown as Model<Api>[];
+          } else {
+            triggerModelCacheRefresh(cred.access, (cred as KiroCredentials).region);
+          }
+        }
+
         const nonKiro = models.filter((m: Model<Api>) => m.provider !== "kiro");
         const modifiedKiro = filterModelsByRegion(kiroOnly, apiRegion).map((m: Model<Api>) => ({
           ...m,
