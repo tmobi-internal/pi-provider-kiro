@@ -58,17 +58,22 @@ npm install -g @vsm/pi-provider-kiro
   → 토큰 저장 → 정상 동작 재개
 ```
 
+### Changelog (v1.0.1)
+
+- **Provisional streaming**: thinking 판정 전에도 즉시 출력 후 타입 조절 및 리렌더링. 지연 없는 스트리밍 UX
+- **Thinking tag start-only**: 응답 첫 위치(position 0)에서만 thinking tag 인식. 중간 출현은 literal text 처리
+
 ### Changelog (v1.0.0)
 
-- **인증 단순화**: token refresh를 kiro-cli에 위임, 반복 로그인 제거
-- **Extended Thinking 스트리밍**: reasoning 모델의 thinking 과정 실시간 스트리밍 (budget 조절 지원)
-- **web_search 인터셉션**: Kiro MCP 엔드포인트 직접 호출, pi에 투명하게 결과 주입
-- **truncation recovery**: tool input/content 잘림 감지 + 모델에 재시도 유도
-- **tool spec sanitization**: 64자 초과 이름 truncate, 비표준 필드 제거
-- **모델 목록 자동 최신화**: API 기반 모델 목록 갱신, 새 모델 추가 시 자동 반영
-- **토큰 사용량 표시 개선**: thinking output tokens 포함한 정확한 사용량 계산
-- **바이너리 이벤트 파싱**: Smithy EventStreamCodec + 텍스트 fallback
-- **@earendil-works scope 전환**
+- **Auth simplification**: kiro-cli 를 통한 브라우저 로그인 연동. token refresh 를 kiro-cli에 위임하여 자동 처리
+- **Extended Thinking streaming**: reasoning 모델의 thinking 과정 실시간 스트리밍 방식 개선. budget 조절
+- **Web search interception**: Kiro 의 MCP 엔드포인트 직접 호출. 웹 검색을 요청하면 모델이 자동 수행하여 결과를 답변에 반영
+- **Truncation recovery**: API가 응답을 자를 경우 모델이 자동 재시도
+- **Tool spec sanitization**: 64자 초과 이름 truncate. 긴 도구 이름이나 비표준 스펙으로 인한 API 오류 방지
+- **Auto model refresh**: 모델 목록을 API 기반으로 갱신. 새 모델 추가 시 자동 반영
+- **Token usage**: total_tokens, usage 등 thinking output 포함하여 보다 정확한 사용량 계산
+- **Binary event parsing**: Smithy EventStreamCodec + 텍스트 fallback. 기존 파싱 오류의 주범
+- **Legacy cleanup**: PI 메인 라이브러리 중 의존성 변경 대상 정리
 
 ---
 

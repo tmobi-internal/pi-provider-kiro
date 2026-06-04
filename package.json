@@ -1,6 +1,6 @@
 {
   "name": "@vsm/pi-provider-kiro",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "pi extension for the Kiro API (AWS CodeWhisperer/Q) — 19 models across 8 families with OAuth authentication",
   "type": "module",
   "license": "MIT",
