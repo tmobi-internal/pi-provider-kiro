@@ -45,7 +45,6 @@ npm install -g @vsm/pi-provider-kiro
 
 - 직접 OAuth 리프레시 엔드포인트 호출 로직(`refreshKiroTokenDirect`) 제거
 - 토큰 갱신은 kiro-cli DB 확인만 수행, 유효한 토큰 없으면 재로그인 유도
-- `refreshViaKiroCli` (kiro-cli debug 명령 호출) 제거
 - 403 응답 시 kiro-cli DB에 유효 토큰 없으면 즉시 에러 (무의미한 재시도 방지)
 
 ### 인증 흐름
@@ -58,6 +57,19 @@ npm install -g @vsm/pi-provider-kiro
   → kiro-cli login 실행 (브라우저 인증)
   → 토큰 저장 → 정상 동작 재개
 ```
+
+### Changelog (v1.0.0)
+
+- **인증 단순화**: token refresh를 kiro-cli에 위임, 반복 로그인 제거
+- **Extended Thinking 스트리밍**: reasoning 모델의 thinking 과정 실시간 스트리밍 (budget 조절 지원)
+- **web_search 인터셉션**: Kiro MCP 엔드포인트 직접 호출, pi에 투명하게 결과 주입
+- **truncation recovery**: tool input/content 잘림 감지 + 모델에 재시도 유도
+- **tool spec sanitization**: 64자 초과 이름 truncate, 비표준 필드 제거
+- **모델 목록 자동 최신화**: API 기반 모델 목록 갱신, 새 모델 추가 시 자동 반영
+- **토큰 사용량 표시 개선**: thinking output tokens 포함한 정확한 사용량 계산
+- **바이너리 이벤트 파싱**: Smithy EventStreamCodec + 텍스트 fallback
+- **@earendil-works scope 전환**
+
 ---
 
 ## Original README (pi-provider-kiro)
