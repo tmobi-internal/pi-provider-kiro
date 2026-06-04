@@ -202,6 +202,8 @@ function buildModel(m: CacheModel) {
 // --- Public API ---
 
 let cachedModels: ReturnType<typeof buildModel>[] | null = null;
+export let usedFallback = false;
+let fetchAttempted = false;
 
 export async function loadKiroModels(accessToken?: string, region?: string): Promise<ReturnType<typeof buildModel>[]> {
   const apiRegion = resolveApiRegion(region);
@@ -231,6 +233,7 @@ export async function loadKiroModels(accessToken?: string, region?: string): Pro
   }
 
   // 4. Fallback
+  usedFallback = true;
   cachedModels = FALLBACK_MODELS.map(buildModel);
   return cachedModels;
 }
@@ -263,4 +266,27 @@ export const KIRO_MODEL_IDS = new Set(getKiroModels().map((m) => m.id.replace(/(
 
 export function filterModelsByRegion<T extends { id: string }>(models: T[], _apiRegion: string): T[] {
   return models;
+}
+
+// --- Dynamic refresh for modifyModels ---
+
+export function readCachedModels(): ReturnType<typeof buildModel>[] | null {
+  const cache = readCacheFile();
+  if (!cache?.models?.length) return null;
+  usedFallback = false;
+  return cache.models.map(buildModel);
+}
+
+export function triggerModelCacheRefresh(accessToken: string, region?: string): void {
+  if (fetchAttempted) return;
+  fetchAttempted = true;
+
+  const apiRegion = resolveApiRegion(region);
+
+  fetchModelsFromApi(accessToken, apiRegion).then((models) => {
+    if (models) {
+      saveCache(models, apiRegion);
+      usedFallback = false;
+    }
+  }).catch(() => {});
 }
