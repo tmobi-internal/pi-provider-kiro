@@ -2,7 +2,7 @@
 // ABOUTME: Provides fallback auth and write-back to keep kiro-cli in sync after refresh.
 
 import { execFileSync, execSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
@@ -261,4 +261,33 @@ export function refreshViaKiroCli(): KiroCredentials | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Read stored credentials for model list loading at startup.
+ * Tries pi auth.json first, then kiro-cli DB.
+ */
+export function getStoredCredentials(): { access: string; region?: string } | undefined {
+  try {
+    const authPath = join(homedir(), ".pi", "agent", "auth.json");
+
+    if (existsSync(authPath)) {
+      const data = JSON.parse(readFileSync(authPath, "utf-8")) as Record<string, unknown>;
+      const kiro = data.kiro as { type?: string; access?: string; expires?: number; region?: string } | undefined;
+
+      if (kiro?.type === "oauth" && kiro.access && kiro.expires && Date.now() < kiro.expires) {
+        return { access: kiro.access, region: kiro.region };
+      }
+    }
+  } catch {
+    // Fall through
+  }
+
+  const cliCreds = getKiroCliCredentials();
+
+  if (cliCreds?.access) {
+    return { access: cliCreds.access, region: cliCreds.region };
+  }
+
+  return undefined;
 }

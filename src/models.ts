@@ -1,7 +1,6 @@
 // Feature 2: Model Definitions
-// Dynamic model list: CLI → cache file → hardcoded minimal fallback
+// Dynamic model list: cache file → API fetch → hardcoded fallback
 
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,6 +8,7 @@ import { dirname, join } from "node:path";
 const BASE_URL = "https://q.us-east-1.amazonaws.com/generateAssistantResponse";
 const ZERO_COST = Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
 const CACHE_PATH = join(homedir(), ".pi", "cache", "kiro-models.json");
+const CACHE_TTL = 3 * 24 * 60 * 60 * 1000;
 
 // --- Region Mapping ---
 
@@ -47,71 +47,58 @@ export function resolveApiRegion(ssoRegion: string | undefined): string {
   return API_REGION_MAP[ssoRegion] ?? ssoRegion;
 }
 
-// --- Model Metadata (supplements dynamic list with info CLI doesn't provide) ---
+// --- Model Metadata (supplements API with fields not available from the API) ---
 
 interface ModelMeta {
-  name?: string;
-  contextWindow?: number;
-  maxTokens?: number;
-  reasoning?: boolean;
-  input?: ("text" | "image")[];
   thinkingLevelMap?: Record<string, string>;
   firstTokenTimeout?: number;
 }
 
 const MODEL_METADATA: Record<string, ModelMeta> = {
-  "claude-opus-4-8": { name: "Claude Opus 4.8", contextWindow: 1000000, maxTokens: 128000, reasoning: true, input: ["text", "image"], thinkingLevelMap: { xhigh: "xhigh" }, firstTokenTimeout: 180_000 },
-  "claude-opus-4-7": { name: "Claude Opus 4.7", contextWindow: 1000000, maxTokens: 128000, reasoning: true, input: ["text", "image"], thinkingLevelMap: { xhigh: "xhigh" }, firstTokenTimeout: 180_000 },
-  "claude-opus-4-6": { name: "Claude Opus 4.6", contextWindow: 1000000, maxTokens: 64000, reasoning: true, input: ["text", "image"], thinkingLevelMap: { xhigh: "xhigh" }, firstTokenTimeout: 180_000 },
-  "claude-sonnet-4-6": { name: "Claude Sonnet 4.6", contextWindow: 1000000, maxTokens: 64000, reasoning: true, input: ["text", "image"] },
-  "claude-opus-4-5": { name: "Claude Opus 4.5", contextWindow: 200000, maxTokens: 64000, reasoning: true, input: ["text", "image"] },
-  "claude-sonnet-4-5": { name: "Claude Sonnet 4.5", contextWindow: 200000, maxTokens: 64000, reasoning: true, input: ["text", "image"] },
-  "claude-sonnet-4": { name: "Claude Sonnet 4", contextWindow: 200000, maxTokens: 64000, reasoning: true, input: ["text", "image"] },
-  "claude-haiku-4-5": { name: "Claude Haiku 4.5", contextWindow: 200000, maxTokens: 64000, reasoning: false, input: ["text", "image"] },
-  "deepseek-3-2": { name: "DeepSeek 3.2", contextWindow: 164000, maxTokens: 64000, reasoning: true, input: ["text"] },
-  "minimax-m2-5": { name: "MiniMax M2.5", contextWindow: 196000, maxTokens: 64000, reasoning: false, input: ["text"] },
-  "minimax-m2-1": { name: "MiniMax M2.1", contextWindow: 196000, maxTokens: 64000, reasoning: false, input: ["text"] },
-  "glm-5": { name: "GLM 5", contextWindow: 200000, maxTokens: 64000, reasoning: true, input: ["text"] },
-  "qwen3-coder-next": { name: "Qwen3 Coder Next", contextWindow: 256000, maxTokens: 64000, reasoning: true, input: ["text"] },
-  "auto": { name: "Auto", contextWindow: 1000000, maxTokens: 64000, reasoning: true, input: ["text", "image"] },
+  "claude-opus-4-8": { thinkingLevelMap: { xhigh: "xhigh" }, firstTokenTimeout: 180_000 },
+  "claude-opus-4-7": { thinkingLevelMap: { xhigh: "xhigh" }, firstTokenTimeout: 180_000 },
+  "claude-opus-4-6": { thinkingLevelMap: { xhigh: "xhigh" }, firstTokenTimeout: 180_000 },
 };
 
-// --- Hardcoded minimal fallback (used only when CLI + cache both unavailable) ---
+// --- Cache format (pi-specific normalized) ---
 
-const FALLBACK_MODEL_IDS = [
-  "claude-opus-4-8",
-  "claude-opus-4-7",
-  "claude-sonnet-4-6",
-  "claude-sonnet-4",
-  "auto",
-];
-
-// --- API fetch + cache ---
-
-interface ApiModel {
+interface CacheModel {
   modelId: string;
-  modelName?: string;
-  tokenLimits?: { maxInputTokens?: number; maxOutputTokens?: number };
-  additionalModelRequestFieldsSchema?: { properties?: { thinking?: unknown } } | null;
-  supportedInputTypes?: string[];
+  modelName: string;
+  reasoning: boolean;
+  input: ("text" | "image")[];
+  contextWindow: number;
+  maxTokens: number;
+  promptCaching: boolean;
 }
 
 interface CacheFile {
-  models: ApiModel[];
-  timestamp: number;
-  apiRegion?: string;
+  timestamp: string;
+  apiRegion: string;
+  models: CacheModel[];
 }
 
-const CACHE_TTL = 24 * 60 * 60 * 1000;
+// --- Hardcoded fallback (used only when cache + API both unavailable) ---
+
+const FALLBACK_MODELS: CacheModel[] = [
+  { modelId: "claude-opus-4.8", modelName: "Claude Opus 4.8", reasoning: true, input: ["text", "image"], contextWindow: 1000000, maxTokens: 128000, promptCaching: true },
+  { modelId: "claude-opus-4.7", modelName: "Claude Opus 4.7", reasoning: true, input: ["text", "image"], contextWindow: 1000000, maxTokens: 128000, promptCaching: true },
+  { modelId: "claude-sonnet-4.6", modelName: "Claude Sonnet 4.6", reasoning: true, input: ["text", "image"], contextWindow: 1000000, maxTokens: 64000, promptCaching: true },
+  { modelId: "claude-sonnet-4", modelName: "Claude Sonnet 4", reasoning: true, input: ["text", "image"], contextWindow: 200000, maxTokens: 64000, promptCaching: true },
+  { modelId: "auto", modelName: "Auto", reasoning: true, input: ["text", "image"], contextWindow: 1000000, maxTokens: 64000, promptCaching: true },
+];
+
+// --- Cache read/write ---
 
 function readCacheFile(): CacheFile | null {
   try {
     if (!existsSync(CACHE_PATH)) return null;
     const data = JSON.parse(readFileSync(CACHE_PATH, "utf-8")) as CacheFile;
-    if (!data.models?.length) return null;
+    if (!data.models?.length || !data.timestamp) return null;
 
-    // Legacy format (string[]) — discard
-    if (typeof data.models[0] === "string") return null;
+    // Legacy format detection — discard
+    if (typeof (data.models[0] as unknown) === "string") return null;
+    if (!("modelId" in data.models[0])) return null;
 
     return data;
   } catch {
@@ -119,49 +106,59 @@ function readCacheFile(): CacheFile | null {
   }
 }
 
-function isCacheStale(cache: CacheFile): boolean {
-  return Date.now() - cache.timestamp > CACHE_TTL;
+function isCacheFresh(cache: CacheFile): boolean {
+  const ts = new Date(cache.timestamp).getTime();
+  return Date.now() - ts < CACHE_TTL;
 }
 
-function isCacheFreshForRegion(cache: CacheFile, apiRegion: string): boolean {
-  return !isCacheStale(cache) && cache.apiRegion === apiRegion;
-}
-
-function saveCache(models: ApiModel[], apiRegion: string): void {
+function saveCache(models: CacheModel[], apiRegion: string): void {
   try {
     const dir = dirname(CACHE_PATH);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(CACHE_PATH, JSON.stringify({ models, timestamp: Date.now(), apiRegion } satisfies CacheFile));
+
+    const cacheFile: CacheFile = {
+      timestamp: new Date().toISOString(),
+      apiRegion,
+      models,
+    };
+
+    writeFileSync(CACHE_PATH, JSON.stringify(cacheFile, null, 2));
   } catch {
     // Non-fatal
   }
 }
 
-type KiroCliModel = { model_id: string };
+// --- API response → normalized CacheModel ---
 
-function fetchKiroCliModels(): string[] | null {
-  try {
-    const out = execFileSync("kiro-cli", ["chat", "--list-models", "--format", "json"], {
-      timeout: 5000,
-      stdio: ["pipe", "pipe", "pipe"],
-      encoding: "utf-8",
-    });
-
-    const data = JSON.parse(out) as { models: KiroCliModel[] };
-    const ids = (data.models ?? []).map((m) => m.model_id.replace(/(\d)\.(\d)/g, "$1-$2"));
-    return ids.length > 0 ? ids : null;
-  } catch {
-    return null;
-  }
+interface ApiModel {
+  modelId: string;
+  modelName?: string;
+  tokenLimits?: { maxInputTokens?: number; maxOutputTokens?: number };
+  additionalModelRequestFieldsSchema?: { properties?: { thinking?: unknown } } | null;
+  supportedInputTypes?: string[];
+  promptCaching?: { supportsPromptCaching?: boolean } | null;
 }
 
-export async function refreshModelsCache(accessToken: string, region: string): Promise<void> {
+function normalizeApiModel(m: ApiModel): CacheModel {
+  const inputTypes = (m.supportedInputTypes ?? [])
+    .map((t) => t.toLowerCase())
+    .filter((t): t is "text" | "image" => t === "text" || t === "image");
+
+  return {
+    modelId: m.modelId,
+    modelName: m.modelName ?? m.modelId,
+    reasoning: !!m.additionalModelRequestFieldsSchema?.properties?.thinking,
+    input: inputTypes.length > 0 ? inputTypes : ["text"],
+    contextWindow: m.tokenLimits?.maxInputTokens ?? 200000,
+    maxTokens: m.tokenLimits?.maxOutputTokens ?? 64000,
+    promptCaching: !!m.promptCaching?.supportsPromptCaching,
+  };
+}
+
+// --- Fetch from API ---
+
+async function fetchModelsFromApi(accessToken: string, apiRegion: string): Promise<CacheModel[] | null> {
   try {
-    const apiRegion = resolveApiRegion(region);
-    const cache = readCacheFile();
-
-    if (cache && isCacheFreshForRegion(cache, apiRegion)) return;
-
     const url = `https://q.${apiRegion}.amazonaws.com/ListAvailableModels?origin=AI_EDITOR`;
 
     const response = await fetch(url, {
@@ -169,78 +166,34 @@ export async function refreshModelsCache(accessToken: string, region: string): P
       headers: { Authorization: `Bearer ${accessToken}` },
     });
 
-    if (!response.ok) return;
+    if (!response.ok) return null;
 
     const data = (await response.json()) as { models?: ApiModel[] };
-    const models = data.models ?? [];
+    const models = (data.models ?? []).map(normalizeApiModel);
 
-    if (models.length > 0) {
-      saveCache(models, apiRegion);
-      const refreshed = models.map(buildModelFromApi);
-
-      if (cachedModels) {
-        cachedModels.splice(0, cachedModels.length, ...refreshed);
-      } else {
-        cachedModels = refreshed;
-      }
-    }
+    return models.length > 0 ? models : null;
   } catch {
-    // Non-fatal
+    return null;
   }
 }
 
-// --- Model resolution cascade ---
+// --- Build pi model from CacheModel ---
 
-function resolveModels(): ReturnType<typeof buildModelFromApi>[] {
-  const cache = readCacheFile();
-
-  if (cache?.models) {
-    return cache.models.map(buildModelFromApi);
-  }
-
-  const ids = fetchKiroCliModels() ?? FALLBACK_MODEL_IDS;
-  return ids.map(buildModelFromMeta);
-}
-
-function buildModelFromApi(m: ApiModel) {
+function buildModel(m: CacheModel) {
   const piId = m.modelId.replace(/(\d)\.(\d)/g, "$1-$2");
   const meta = MODEL_METADATA[piId];
-  const hasThinking = !!m.additionalModelRequestFieldsSchema?.properties?.thinking;
-  const inputTypes = (m.supportedInputTypes ?? [])
-    .map((t) => t.toLowerCase())
-    .filter((t): t is "text" | "image" => t === "text" || t === "image");
 
   return {
     id: piId,
-    name: m.modelName ?? meta?.name ?? piId.split("-").map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(" "),
+    name: m.modelName,
     api: "kiro-api" as const,
     provider: "kiro" as const,
     baseUrl: BASE_URL,
-    reasoning: piId === "auto" ? true : hasThinking,
-    input: inputTypes.length > 0 ? inputTypes : (meta?.input ?? ["text"]) as ("text" | "image")[],
+    reasoning: piId === "auto" ? true : m.reasoning,
+    input: m.input,
     cost: ZERO_COST,
-    contextWindow: m.tokenLimits?.maxInputTokens ?? meta?.contextWindow ?? 200000,
-    maxTokens: m.tokenLimits?.maxOutputTokens ?? meta?.maxTokens ?? 64000,
-    ...(meta?.thinkingLevelMap && { thinkingLevelMap: meta.thinkingLevelMap }),
-    ...(meta?.firstTokenTimeout && { firstTokenTimeout: meta.firstTokenTimeout }),
-  };
-}
-
-function buildModelFromMeta(piId: string) {
-  const meta = MODEL_METADATA[piId];
-  const name = meta?.name ?? piId.split("-").map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
-
-  return {
-    id: piId,
-    name,
-    api: "kiro-api" as const,
-    provider: "kiro" as const,
-    baseUrl: BASE_URL,
-    reasoning: piId === "auto" ? true : (meta?.reasoning ?? false),
-    input: (meta?.input ?? ["text"]) as ("text" | "image")[],
-    cost: ZERO_COST,
-    contextWindow: meta?.contextWindow ?? 200000,
-    maxTokens: meta?.maxTokens ?? 64000,
+    contextWindow: m.contextWindow,
+    maxTokens: m.maxTokens,
     ...(meta?.thinkingLevelMap && { thinkingLevelMap: meta.thinkingLevelMap }),
     ...(meta?.firstTokenTimeout && { firstTokenTimeout: meta.firstTokenTimeout }),
   };
@@ -248,11 +201,46 @@ function buildModelFromMeta(piId: string) {
 
 // --- Public API ---
 
-let cachedModels: ReturnType<typeof buildModelFromMeta>[] | null = null;
+let cachedModels: ReturnType<typeof buildModel>[] | null = null;
+
+export async function loadKiroModels(accessToken?: string, region?: string): Promise<ReturnType<typeof buildModel>[]> {
+  const apiRegion = resolveApiRegion(region);
+  const cache = readCacheFile();
+
+  // 1. Fresh cache → use directly
+  if (cache && isCacheFresh(cache)) {
+    cachedModels = cache.models.map(buildModel);
+    return cachedModels;
+  }
+
+  // 2. Stale/missing → try API
+  if (accessToken) {
+    const apiModels = await fetchModelsFromApi(accessToken, apiRegion);
+
+    if (apiModels) {
+      saveCache(apiModels, apiRegion);
+      cachedModels = apiModels.map(buildModel);
+      return cachedModels;
+    }
+  }
+
+  // 3. API failed but stale cache exists → use stale
+  if (cache?.models) {
+    cachedModels = cache.models.map(buildModel);
+    return cachedModels;
+  }
+
+  // 4. Fallback
+  cachedModels = FALLBACK_MODELS.map(buildModel);
+  return cachedModels;
+}
 
 export function getKiroModels() {
   if (cachedModels) return cachedModels;
-  cachedModels = resolveModels();
+
+  // Sync path: cache file or fallback (no API, no CLI)
+  const cache = readCacheFile();
+  cachedModels = (cache?.models ?? FALLBACK_MODELS).map(buildModel);
   return cachedModels;
 }
 
@@ -261,11 +249,12 @@ export const kiroModels = getKiroModels();
 
 export function resolveKiroModel(modelId: string): string {
   const kiroId = modelId.replace(/(\d)-(\d)/g, "$1.$2");
-  // Accept any model from the resolved list — don't throw on dynamic models
   const knownIds = new Set(getKiroModels().map((m) => m.id.replace(/(\d)-(\d)/g, "$1.$2")));
+
   if (!knownIds.has(kiroId)) {
     throw new Error(`Unknown Kiro model ID: ${modelId}`);
   }
+
   return kiroId;
 }
 
@@ -273,7 +262,5 @@ export function resolveKiroModel(modelId: string): string {
 export const KIRO_MODEL_IDS = new Set(getKiroModels().map((m) => m.id.replace(/(\d)-(\d)/g, "$1.$2")));
 
 export function filterModelsByRegion<T extends { id: string }>(models: T[], _apiRegion: string): T[] {
-  // When models come from CLI, they are already region-appropriate.
-  // No additional filtering needed — CLI returns only available models for the authenticated region.
   return models;
 }
