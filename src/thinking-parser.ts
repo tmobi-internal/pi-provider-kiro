@@ -98,7 +98,8 @@ export class ThinkingTagParser {
   private textBlockIndex: number | null = null;
   private thinkingStarted = false;
   private contentEmitted = false;
-
+  private thinkingTrimmed = false;
+  private textTrimmed = false;
   constructor(
     private output: AssistantMessage,
     private stream: AssistantMessageEventStream,
@@ -235,9 +236,6 @@ export class ThinkingTagParser {
 
       let remaining = this.buffer.slice(closePos + this.activeCloseTag.length);
 
-      if (remaining.startsWith("\n\n")) {
-        remaining = remaining.slice(2);
-      }
 
       this.buffer = remaining;
       this.state = "POST_THINKING";
@@ -366,9 +364,17 @@ export class ThinkingTagParser {
     const idx = this.thinkingBlockIndex;
     if (idx === null) return;
 
+    let d = delta;
+
+    if (!this.thinkingTrimmed) {
+      d = d.replace(/^[\n\r]+/, "");
+      if (!d) return;
+      this.thinkingTrimmed = true;
+    }
+
     const block = this.output.content[idx] as ThinkingContent;
-    block.thinking += delta;
-    this.stream.push({ type: "thinking_delta", contentIndex: idx, delta, partial: this.output });
+    block.thinking += d;
+    this.stream.push({ type: "thinking_delta", contentIndex: idx, delta: d, partial: this.output });
   }
 
   private endThinking(): void {
@@ -391,8 +397,16 @@ export class ThinkingTagParser {
     const idx = this.textBlockIndex;
     if (idx === null) return;
 
+    let d = delta;
+
+    if (!this.textTrimmed) {
+      d = d.replace(/^[\n\r]+/, "");
+      if (!d) return;
+      this.textTrimmed = true;
+    }
+
     const block = this.output.content[idx] as TextContent;
-    block.text += delta;
-    this.stream.push({ type: "text_delta", contentIndex: idx, delta, partial: this.output });
+    block.text += d;
+    this.stream.push({ type: "text_delta", contentIndex: idx, delta: d, partial: this.output });
   }
 }

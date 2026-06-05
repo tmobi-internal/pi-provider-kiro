@@ -522,3 +522,45 @@ describe("Feature 7: partial reference behavior", () => {
     expect((output.content[0] as { text: string }).text).toBe("Hello world");
   });
 });
+
+describe("Feature 7: leading newline strip", () => {
+
+  it("strips leading newlines from thinking content", async () => {
+    const events = await run(["<thinking>\n\nreasoning here</thinking>\n\nAnswer"]);
+    expect(deltas(events, "thinking_delta")).toBe("reasoning here");
+    expect(deltas(events, "text_delta")).toBe("Answer");
+  });
+
+  it("strips leading newlines from thinking across chunks", async () => {
+    const events = await run(["<thinking>\n", "\ndeep thought</thinking>\n\nText"]);
+    expect(deltas(events, "thinking_delta")).toBe("deep thought");
+    expect(deltas(events, "text_delta")).toBe("Text");
+  });
+
+  it("strips single newline after close tag", async () => {
+    const events = await run(["<thinking>t</thinking>\nAnswer"]);
+    expect(deltas(events, "text_delta")).toBe("Answer");
+  });
+
+  it("strips multiple newlines after close tag", async () => {
+    const events = await run(["<thinking>t</thinking>\n\n\nAnswer"]);
+    expect(deltas(events, "text_delta")).toBe("Answer");
+  });
+
+  it("strips leading newlines from text on type conversion (no tag)", () => {
+    const output = finalOutput(["\n\nHello world"]);
+    expect(output.content[0]?.type).toBe("text");
+    expect((output.content[0] as { text: string }).text).toBe("Hello world");
+  });
+
+  it("preserves leading spaces/tabs in thinking content", async () => {
+    const events = await run(["<thinking>  indented</thinking>\n\nText"]);
+    expect(deltas(events, "thinking_delta")).toBe("  indented");
+  });
+
+  it("preserves leading spaces/tabs in text content", async () => {
+    const events = await run(["<thinking>t</thinking>\n\n  indented text"]);
+    expect(deltas(events, "text_delta")).toBe("  indented text");
+  });
+
+});
