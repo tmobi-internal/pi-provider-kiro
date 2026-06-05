@@ -167,8 +167,10 @@ export class ThinkingTagParser {
     const match = findEarliestOpeningTag(this.buffer);
 
     if (match) {
-      if (match.pos !== 0) {
-        // Tag is not at position 0 — treat as literal text
+      const before = this.buffer.slice(0, match.pos);
+
+      if (before && before.trim().length > 0) {
+        // Non-whitespace before tag — treat as literal text
         this.ensureThinking();
         this.appendThinking(this.buffer);
         this.buffer = "";
@@ -177,7 +179,8 @@ export class ThinkingTagParser {
         return;
       }
 
-      this.buffer = this.buffer.slice(match.variant.open.length);
+      // Tag at position 0 or only whitespace before — trim and enter thinking
+      this.buffer = this.buffer.slice(match.pos + match.variant.open.length);
       this.activeCloseTag = match.variant.close;
       this.state = "IN_THINKING";
       this.ensureThinking();
@@ -196,6 +199,10 @@ export class ThinkingTagParser {
 
     if (safeLen > 0) {
       const safe = this.buffer.slice(0, safeLen);
+
+      // Whitespace-only safe content — hold without emitting (tag may follow)
+      if (safe.trim().length === 0) return;
+
       this.ensureThinking();
       this.appendThinking(safe);
       this.buffer = this.buffer.slice(safeLen);

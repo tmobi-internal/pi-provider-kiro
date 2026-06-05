@@ -395,16 +395,16 @@ describe("Feature 7: Start position limit", () => {
     );
   });
 
-  it("leading whitespace before thinking tag — treated as text", async () => {
+  it("leading whitespace before thinking tag — trimmed and recognized", async () => {
     const output = finalOutput(["  \n<thinking>deep thought</thinking>\n\nAnswer"]);
-    expect(output.content).toHaveLength(1);
-    expect(output.content[0]?.type).toBe("text");
-    expect((output.content[0] as { text: string }).text).toBe(
-      "  \n<thinking>deep thought</thinking>\n\nAnswer",
-    );
+    expect(output.content).toHaveLength(2);
+    expect(output.content[0]?.type).toBe("thinking");
+    expect((output.content[0] as { thinking: string }).thinking).toBe("deep thought");
+    expect(output.content[1]?.type).toBe("text");
+    expect((output.content[1] as { text: string }).text).toBe("Answer");
   });
 
-  it("whitespace chunk before tag — treated as text", () => {
+  it("whitespace chunk before tag — trimmed and recognized", () => {
     const output = makeOutput();
     const stream = createAssistantMessageEventStream();
     const parser = new ThinkingTagParser(output, stream);
@@ -413,9 +413,22 @@ describe("Feature 7: Start position limit", () => {
     parser.processChunk("<thinking>thought</thinking>\n\nText");
     parser.finalize();
 
+    expect(output.content[0]?.type).toBe("thinking");
+    expect((output.content[0] as { thinking: string }).thinking).toBe("thought");
+    expect(output.content[1]?.type).toBe("text");
+    expect((output.content[1] as { text: string }).text).toBe("Text");
+  });
+
+  it("newline before tag in single chunk — trimmed and recognized", async () => {
+    const events = await run(["\n<thinking>reasoning</thinking>\n\nOutput"]);
+    expect(deltas(events, "thinking_delta")).toBe("reasoning");
+    expect(deltas(events, "text_delta")).toBe("Output");
+  });
+
+  it("non-whitespace before tag — still treated as text", async () => {
+    const output = finalOutput(["x <thinking>deep thought</thinking>\n\nAnswer"]);
+    expect(output.content).toHaveLength(1);
     expect(output.content[0]?.type).toBe("text");
-    expect((output.content[0] as { text: string }).text).toContain("   ");
-    expect((output.content[0] as { text: string }).text).toContain("<thinking>");
   });
 });
 describe("Feature 7: Close tag false-positive defense", () => {
