@@ -58,6 +58,10 @@ npm install -g @vsm/pi-provider-kiro
   → 토큰 저장 → 정상 동작 재개
 ```
 
+### Changelog (v1.0.2)
+
+- **Thinking output cleanup**: thinking/text 블록 시작부의 불필요한 개행·공백 제거. 깔끔한 출력
+
 ### Changelog (v1.0.1)
 
 - **Provisional streaming**: thinking 판정 전에도 즉시 출력 후 타입 조절 및 리렌더링. 지연 없는 스트리밍 UX
