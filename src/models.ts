@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 const BASE_URL = "https://q.us-east-1.amazonaws.com/generateAssistantResponse";
 const ZERO_COST = Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
 const CACHE_PATH = join(homedir(), ".pi", "cache", "kiro-models.json");
-const CACHE_TTL = 3 * 24 * 60 * 60 * 1000;
+const CACHE_TTL = 1 * 24 * 60 * 60 * 1000;
 
 // --- Region Mapping ---
 
