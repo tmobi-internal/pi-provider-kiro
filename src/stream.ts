@@ -260,10 +260,56 @@ function emitToolCall(
   return true;
 }
 
+function mergeRequestHeaders(
+  base: Record<string, string>,
+  overrides?: Record<string, string | null>,
+): Record<string, string> {
+  if (!overrides) return base;
+
+  const merged: Record<string, string> = { ...base };
+  const lowerToKey = new Map<string, string>();
+
+  for (const key of Object.keys(merged)) {
+    lowerToKey.set(key.toLowerCase(), key);
+  }
+
+  for (const [key, value] of Object.entries(overrides)) {
+    const existingKey = lowerToKey.get(key.toLowerCase());
+
+    if (value === null) {
+      if (existingKey) delete merged[existingKey];
+      continue;
+    }
+
+    if (existingKey) merged[existingKey] = value;
+    else {
+      merged[key] = value;
+      lowerToKey.set(key.toLowerCase(), key);
+    }
+  }
+
+  return merged;
+}
+
+function withTimeout(signal?: AbortSignal, timeoutMs?: number): AbortSignal | undefined {
+  if (!timeoutMs || timeoutMs <= 0) return signal;
+
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+
+  if (!signal) return timeoutSignal;
+
+  return AbortSignal.any([signal, timeoutSignal]);
+}
+
+export type KiroStreamOptions = SimpleStreamOptions & {
+  thinkingEnabled?: boolean;
+  thinkingBudgetTokens?: number;
+};
+
 export function streamKiro(
   model: Model<Api>,
   context: Context,
-  options?: SimpleStreamOptions,
+  options?: KiroStreamOptions,
 ): AssistantMessageEventStream {
   const stream = createAssistantMessageEventStream();
   const output: AssistantMessage = {
@@ -291,7 +337,8 @@ export function streamKiro(
 
       let profileArn = await resolveProfileArn(accessToken, endpoint);
       const kiroModelId = resolveKiroModel(model.id);
-      const thinkingEnabled = !!options?.reasoning || model.reasoning;
+      const thinkingEnabled =
+        options?.thinkingEnabled ?? (!!options?.reasoning || model.reasoning);
       debugLog("request.init", {
         endpoint,
         model: model.id,
@@ -308,7 +355,8 @@ export function streamKiro(
       let systemPrompt = context.systemPrompt ?? "";
       if (thinkingEnabled) {
         const budget =
-          options?.reasoning === "xhigh"
+          options?.thinkingBudgetTokens ??
+          (options?.reasoning === "xhigh"
             ? 16384
             : options?.reasoning === "high"
               ? 16384
@@ -316,11 +364,13 @@ export function streamKiro(
                 ? 8192
                 : options?.reasoning === "low"
                   ? 2048
-                  : 1024;
+                  : 1024);
         systemPrompt = `<thinking_mode>enabled</thinking_mode><max_thinking_length>${budget}</max_thinking_length>${systemPrompt ? `\n${systemPrompt}` : ""}`;
       }
       let retryCount = 0;
-      const maxRetries = 3;
+      const maxRetries = options?.maxRetries ?? 3;
+      const maxRetryDelay = options?.maxRetryDelayMs ?? MAX_RETRY_DELAY;
+      const requestFetch = options?.fetch ?? fetch;
       const conversationId = options?.sessionId ?? crypto.randomUUID();
       while (retryCount <= maxRetries) {
         if (options?.signal?.aborted) throw options.signal.reason;
@@ -475,23 +525,29 @@ export function streamKiro(
             tools: uimc?.tools?.map((t) => t.toolSpecification.name),
             request,
           });
-          response = await fetch(endpoint, {
+          const payload = (await options?.onPayload?.(request, model)) ?? request;
+
+          response = await requestFetch(endpoint, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/x-amz-json-1.0",
-              Accept: "application/json",
-              Authorization: `Bearer ${accessToken}`,
-              "X-Amz-Target": "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
-              "x-amzn-codewhisperer-optout": "true",
-              "amz-sdk-invocation-id": crypto.randomUUID(),
-              "amz-sdk-request": "attempt=1; max=1",
-              "x-amzn-kiro-agent-mode": "vibe",
-              "x-amz-user-agent": ua,
-              "user-agent": ua,
-            },
-            body: JSON.stringify(request),
-            signal: options?.signal,
+            headers: mergeRequestHeaders(
+              {
+                "Content-Type": "application/x-amz-json-1.0",
+                Accept: "application/json",
+                Authorization: `Bearer ${accessToken}`,
+                "X-Amz-Target": "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
+                "x-amzn-codewhisperer-optout": "true",
+                "amz-sdk-invocation-id": crypto.randomUUID(),
+                "amz-sdk-request": "attempt=1; max=1",
+                "x-amzn-kiro-agent-mode": "vibe",
+                "x-amz-user-agent": ua,
+                "user-agent": ua,
+              },
+              options?.headers,
+            ),
+            body: JSON.stringify(payload),
+            signal: withTimeout(options?.signal, options?.timeoutMs),
           });
+
           if (!response.ok) {
             let errText = "";
             try {
@@ -530,7 +586,7 @@ export function streamKiro(
               // Re-resolve profileArn with fresh credentials
               profileArnCache.delete(endpoint);
               profileArn = await resolveProfileArn(accessToken, endpoint);
-              const delayMs = exponentialBackoff(retryCount - 1, 500, MAX_RETRY_DELAY);
+              const delayMs = exponentialBackoff(retryCount - 1, 500, maxRetryDelay);
               await abortableDelay(delayMs, options?.signal);
               break; // break inner loop, continue outer loop
             }
@@ -554,6 +610,13 @@ export function streamKiro(
         }
         // 403 retry: continue outer loop
         if (!response.ok) continue;
+        await options?.onResponse?.(
+          {
+            status: response.status,
+            headers: Object.fromEntries(response.headers.entries()),
+          },
+          model,
+        );
         stream.push({ type: "start", partial: output });
         const reader = response.body?.getReader();
         if (!reader) throw new Error("No response body");
@@ -769,7 +832,7 @@ export function streamKiro(
           // Timed out or received error mid-stream: retry with backoff
           if (retryCount < maxRetries) {
             retryCount++;
-            const delayMs = exponentialBackoff(retryCount - 1, 1000, MAX_RETRY_DELAY);
+            const delayMs = exponentialBackoff(retryCount - 1, 1000, maxRetryDelay);
             await abortableDelay(delayMs, options?.signal);
             continue;
           }
@@ -878,7 +941,7 @@ export function streamKiro(
         if ((!hasText && !sawAnyToolCalls) || isEchoLoop) {
           if (retryCount < maxRetries) {
             retryCount++;
-            const delayMs = exponentialBackoff(retryCount - 1, 1000, MAX_RETRY_DELAY);
+            const delayMs = exponentialBackoff(retryCount - 1, 1000, maxRetryDelay);
             notify(`[kiro] ${isEchoLoop ? "Echo loop detected" : "Empty response"} — retrying (${retryCount}/${maxRetries})`, "warning");
             // Reset output content for the retry
             output.content = [];

@@ -2527,3 +2527,220 @@ describe("thinking budget alignment with pi-ai", () => {
     vi.unstubAllGlobals();
   });
 });
+
+function mockFetchOkFull(
+  body: string,
+  init?: { status?: number; headers?: Record<string, string> },
+) {
+  return vi.fn().mockResolvedValueOnce({
+    ok: true,
+    status: init?.status ?? 200,
+    statusText: "OK",
+    headers: new Headers(init?.headers ?? { "x-test": "1" }),
+    body: {
+      getReader: () => ({
+        read: vi
+          .fn()
+          .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(body) })
+          .mockResolvedValueOnce({ done: true, value: undefined }),
+      }),
+    },
+  });
+}
+
+describe("Feature 9: StreamOptions field handling", () => {
+  beforeEach(() => {
+    resetProfileArnCache(true);
+  });
+
+  it("onResponse is called once with status and headers on success", async () => {
+    const mockFetch = mockFetchOkFull('{"content":"Hi"}{"contextUsagePercentage":10}', {
+      status: 200,
+      headers: { "x-amzn-requestid": "abc" },
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const onResponse = vi.fn();
+    const stream = streamKiro(makeModel(), makeContext(), {
+      apiKey: "tok",
+      onResponse,
+    });
+    await collect(stream);
+
+    expect(onResponse).toHaveBeenCalledOnce();
+    const [res] = onResponse.mock.calls[0];
+    expect(res.status).toBe(200);
+    expect(res.headers["x-amzn-requestid"]).toBe("abc");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("onResponse is called only once for the final response after a 403 retry", async () => {
+    const okBody = '{"content":"Hi"}{"contextUsagePercentage":5}';
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+        headers: new Headers(),
+        text: vi.fn().mockResolvedValue("expired"),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: new Headers({ "x-final": "yes" }),
+        body: {
+          getReader: () => ({
+            read: vi
+              .fn()
+              .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(okBody) })
+              .mockResolvedValueOnce({ done: true, value: undefined }),
+          }),
+        },
+      });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const onResponse = vi.fn();
+    const stream = streamKiro(makeModel(), makeContext(), {
+      apiKey: "tok",
+      onResponse,
+    });
+    await collect(stream);
+
+    expect(onResponse).toHaveBeenCalledOnce();
+    expect(onResponse.mock.calls[0][0].status).toBe(200);
+
+    vi.unstubAllGlobals();
+  });
+
+  it("onPayload return value replaces the sent request body", async () => {
+    const mockFetch = mockFetchOkFull('{"content":"Hi"}{"contextUsagePercentage":10}');
+    vi.stubGlobal("fetch", mockFetch);
+
+    const onPayload = vi.fn().mockReturnValue({ replaced: true });
+    const stream = streamKiro(makeModel(), makeContext(), {
+      apiKey: "tok",
+      onPayload,
+    });
+    await collect(stream);
+
+    expect(onPayload).toHaveBeenCalledOnce();
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({ replaced: true });
+
+    vi.unstubAllGlobals();
+  });
+
+  it("onPayload returning undefined keeps the original body", async () => {
+    const mockFetch = mockFetchOkFull('{"content":"Hi"}{"contextUsagePercentage":10}');
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), makeContext(), {
+      apiKey: "tok",
+      onPayload: () => undefined,
+    });
+    await collect(stream);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.conversationState).toBeDefined();
+
+    vi.unstubAllGlobals();
+  });
+
+  it("merges caller headers with override and null deletion", async () => {
+    const mockFetch = mockFetchOkFull('{"content":"Hi"}{"contextUsagePercentage":10}');
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), makeContext(), {
+      apiKey: "tok",
+      headers: { "x-custom": "yes", Accept: "text/plain", "user-agent": null },
+    });
+    await collect(stream);
+
+    const headers = mockFetch.mock.calls[0][1].headers;
+    expect(headers["x-custom"]).toBe("yes");
+    expect(headers.Accept).toBe("text/plain");
+    expect(headers["user-agent"]).toBeUndefined();
+    expect(headers.Authorization).toBe("Bearer tok");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("header merge is case-insensitive for override and deletion", async () => {
+    const mockFetch = mockFetchOkFull('{"content":"Hi"}{"contextUsagePercentage":10}');
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), makeContext(), {
+      apiKey: "tok",
+      // base has "Content-Type" (upper) and "user-agent" (lower);
+      // caller uses the opposite casing to override / delete.
+      headers: { "content-type": "text/plain", "User-Agent": null },
+    });
+    await collect(stream);
+
+    const headers = mockFetch.mock.calls[0][1].headers;
+    const keys = Object.keys(headers);
+
+    // Override collapses onto the existing key, no duplicate casing survives.
+    expect(keys.filter((k) => k.toLowerCase() === "content-type")).toHaveLength(1);
+    expect(headers["Content-Type"]).toBe("text/plain");
+
+    // Deletion matches regardless of casing — no user-agent key of any casing.
+    expect(keys.some((k) => k.toLowerCase() === "user-agent")).toBe(false);
+
+    vi.unstubAllGlobals();
+  });
+
+  it("uses options.fetch instead of the global fetch", async () => {
+    const globalFetch = mockFetchOkFull("{}");
+    vi.stubGlobal("fetch", globalFetch);
+    const customFetch = mockFetchOkFull('{"content":"Hi"}{"contextUsagePercentage":10}');
+
+    const stream = streamKiro(makeModel(), makeContext(), {
+      apiKey: "tok",
+      fetch: customFetch as unknown as typeof fetch,
+    });
+    await collect(stream);
+
+    expect(customFetch).toHaveBeenCalledOnce();
+    expect(globalFetch).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
+  });
+
+  it("thinkingBudgetTokens takes precedence over the reasoning-level mapping", async () => {
+    const mockFetch = mockFetchOkFull('{"content":"Hi"}{"contextUsagePercentage":10}');
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel(), makeContext(), {
+      apiKey: "tok",
+      reasoning: "low",
+      thinkingBudgetTokens: 4242,
+    });
+    await collect(stream);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const content: string = body.conversationState.currentMessage.userInputMessage.content;
+    expect(content).toContain("<max_thinking_length>4242</max_thinking_length>");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("thinkingEnabled=false suppresses thinking even when the model supports reasoning", async () => {
+    const mockFetch = mockFetchOkFull('{"content":"Hi"}{"contextUsagePercentage":10}');
+    vi.stubGlobal("fetch", mockFetch);
+
+    const stream = streamKiro(makeModel({ reasoning: true }), makeContext(), {
+      apiKey: "tok",
+      thinkingEnabled: false,
+    });
+    await collect(stream);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const content: string = body.conversationState.currentMessage.userInputMessage.content;
+    expect(content).not.toContain("max_thinking_length");
+
+    vi.unstubAllGlobals();
+  });
+});
