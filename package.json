@@ -42,9 +42,9 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.2",
-    "@earendil-works/pi-ai": "^0.78.0",
-    "@earendil-works/pi-coding-agent": "^0.78.0",
-    "@earendil-works/pi-tui": "^0.78.0",
+    "@earendil-works/pi-ai": "^0.85.1",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@earendil-works/pi-tui": "^0.85.1",
     "@smithy/eventstream-codec": "^4.0.0",
     "@smithy/util-utf8": "^4.0.0",
     "esbuild": "^0.25.0",

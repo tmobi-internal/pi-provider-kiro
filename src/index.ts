@@ -81,4 +81,19 @@ export default async function (pi: ExtensionAPI) {
     } as any,
     streamSimple: streamKiro,
   });
+
+  // Register kiro-api into the pi-ai/compat registry so paths that resolve
+  // providers there (e.g. ask_advisor via pi-advisor-flow) can reach it.
+  // /compat only exists in pi-ai >= 0.80.1; on older runtimes this import
+  // throws and is silently skipped — the main chat path is unaffected.
+  try {
+    const { registerApiProvider } = await import("@earendil-works/pi-ai/compat");
+
+    registerApiProvider(
+      { api: "kiro-api", stream: streamKiro, streamSimple: streamKiro },
+      "vsm-pi-provider-kiro",
+    );
+  } catch {
+    // pi-ai < 0.80.1: no /compat entrypoint; advisor path unsupported.
+  }
 }
