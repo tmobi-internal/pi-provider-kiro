@@ -58,6 +58,12 @@ npm install -g @vsm/pi-provider-kiro
   → 토큰 저장 → 정상 동작 재개
 ```
 
+### Changelog (v1.0.3)
+
+- **compat 레지스트리 등록**: pi-ai/compat 레지스트리에 kiro-api 등록. 메인 대화 외에 compat 경로로 provider를 조회하는 기능에서도 kiro 사용 가능. 0.80.1 미만 런타임은 안전하게 스킵
+- **StreamOptions 처리**: onPayload/onResponse/headers/timeoutMs/fetch/재시도 옵션을 내장 프로바이더와 동일 계약으로 처리. thinkingEnabled/thinkingBudgetTokens 저수준 필드 우선
+- **모델 캐시 주기 단축**: 모델 목록 갱신 주기를 3일에서 1일로 단축
+
 ### Changelog (v1.0.2)
 
 - **Thinking output cleanup**: thinking/text 블록 시작부의 불필요한 개행·공백 제거. 깔끔한 출력
